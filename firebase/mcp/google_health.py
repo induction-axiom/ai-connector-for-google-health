@@ -16,17 +16,22 @@ API = "https://health.googleapis.com/v4/"
 DISCOVERY = "https://health.googleapis.com/$discovery/rest?version=v4"
 TOKEN = "https://oauth2.googleapis.com/token"
 REVOKE = "https://oauth2.googleapis.com/revoke"
-# Read-only, every area but exercise GPS routes (location), which no tool reads. Every Google
-# Health scope is restricted; each one the owner grants is listed on Google's consent screen.
+# Read-only, every area with something to read. Left out: exercise GPS routes (location),
+# which no tool reads, and mindfulness, logged_symptoms and reproductive_health, whose types
+# Google lets apps write but not read, even with the read scope. Every Google Health scope is
+# restricted; each one the owner grants is listed on Google's consent screen.
 # nutrition.readonly is missing from the discovery document, but Google accepts it.
 SCOPES = tuple(f"https://www.googleapis.com/auth/googlehealth.{area}.readonly" for area in (
     "sleep", "health_metrics_and_measurements", "activity_and_fitness", "profile", "settings",
-    "ecg", "irn", "mindfulness", "logged_symptoms", "reproductive_health", "nutrition"))
+    "ecg", "irn", "nutrition"))
 # The Google account that granted access, for the dashboard.
 IDENTITY_SCOPES = ("openid", "email")
 CONNECT_SCOPES = SCOPES + IDENTITY_SCOPES
 # A new access token is fetched this long before the current one expires.
 EARLY_RENEWAL = 60
+# Seconds to wait before asking again after a 5xx: Google answers one now and then, for a
+# request it answers a moment later.
+RETRY_WAITS = (0.5, 1.5)
 
 
 class GoogleHealthError(Exception):
@@ -129,18 +134,27 @@ class GoogleHealth:
                 self.on_failure(error.code)
             raise
 
+    def _send(self, method, path, params, body, renew=False):
+        token = self.access_token(renew=renew)
+        try:
+            return self.http.request(method, API + path, params=params, json=body,
+                                     headers={"Authorization": "Bearer " + token})
+        except httpx.HTTPError:
+            return None
+
     def _call(self, method, path, params, body):
         params = {k: v for k, v in (params or {}).items() if v is not None}
-        for attempt in range(2):
+        response = self._send(method, path, params, body)
+        if response is not None and response.status_code == 401:
             # A token Google refuses before it expires was revoked: renew it once.
-            token = self.access_token(renew=attempt > 0)
-            try:
-                response = self.http.request(method, API + path, params=params, json=body,
-                                             headers={"Authorization": "Bearer " + token})
-            except httpx.HTTPError:
-                raise GoogleHealthError("google_unavailable") from None
-            if response.status_code != 401:
+            response = self._send(method, path, params, body, renew=True)
+        for wait in RETRY_WAITS:
+            if response is not None and response.status_code < 500:
                 break
+            time.sleep(wait)
+            response = self._send(method, path, params, body)
+        if response is None:
+            raise GoogleHealthError("google_unavailable")
         status = response.status_code
         if status < 300:
             return response.json()

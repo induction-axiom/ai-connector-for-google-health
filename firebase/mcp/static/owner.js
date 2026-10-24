@@ -63,7 +63,6 @@ const GOOGLE_COPY = {
 // What comes back from Google's consent page, and from saving the client.
 const CONNECT_COPY = {
   connected: ["Connected. Your AI apps can read your Google Health data now.", "success"],
-  connected_partly: ["Connected, but not to everything: some data wasn't shared. Connect again and allow all of it.", "warning"],
   denied: ["Nothing was connected: access wasn't allowed on Google's page.", "warning"],
   expired: ["That connection attempt expired. Start again from this page.", "warning"],
   no_refresh_token: ["Google didn't give lasting access. Remove this connector's access at myaccount.google.com/connections, then connect again.", "warning"],
@@ -253,12 +252,6 @@ function confirmButton(label, confirm, act) {
   return button;
 }
 
-const SCOPE_NAMES = {sleep: "Sleep", health_metrics_and_measurements: "Health metrics (heart rate, HRV, SpO2…)",
-  activity_and_fitness: "Activity and fitness", profile: "Profile", settings: "Settings and devices",
-  ecg: "ECG", irn: "Irregular rhythm notifications", mindfulness: "Moods", logged_symptoms: "Symptoms",
-  reproductive_health: "Reproductive health", nutrition: "Food and hydration"};
-const scopeName = scope => SCOPE_NAMES[scope.split(".").at(-2)] || scope;
-
 function renderGoogle(google, state) {
   const hasClient = google.state !== "no_client";
   const tokenSaved = !["no_client", "not_connected"].includes(google.state);
@@ -274,13 +267,10 @@ function renderGoogle(google, state) {
         await loadStatus();
         say("message", ...CONNECT_COPY[result]);
       })));
-    if (google.missing_scopes?.length)
-      rows.push(textRow("Not shared", google.missing_scopes.map(scopeName).join(", ") + ". Connect again and allow it."));
   }
   el("google-rows").replaceChildren(...rows);
-  const reconnect = tokenSaved && (state.action === "connect" || google.missing_scopes?.length);
-  el("connect-actions").classList.toggle("hidden", !(google.state === "not_connected" || reconnect));
-  el("google-connect").textContent = reconnect ? "Connect again" : "Connect Google Health";
+  // Connecting is offered only while there is no access that works.
+  el("connect-actions").classList.toggle("hidden", state.action !== "connect");
   el("connect-note").classList.toggle("hidden", google.state !== "not_connected");
 }
 

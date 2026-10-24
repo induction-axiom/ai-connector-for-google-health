@@ -55,17 +55,13 @@ NEXT_ACTIONS = {
 # The codes that need the owner to act in the dashboard.
 OWNER_ACTIONS = {"not_connected", "google_health_disconnected", "client_invalid", "permission_denied"}
 
-# The data types that need a scope area of their own, from Google's table of scopes. Without
-# it, Google refuses them in several ways (403, 503, or "List is not supported"), so the tools
-# say so without asking for any left out of google_health.SCOPES.
+# The readable data types that need a scope area of their own, from Google's table of scopes.
+# Without it, Google refuses them in several ways (403, 503, or "List is not supported").
 SCOPE_AREAS = {
     "electrocardiogram": "ecg", "irregular-rhythm-notification": "irn",
     "food": "nutrition", "food-measurement-unit": "nutrition", "hydration-log": "nutrition",
-    "nutrition-log": "nutrition", "moods": "mindfulness", "menstrual-period": "reproductive_health",
-    "ovulation-test": "reproductive_health", "symptoms": "logged_symptoms",
+    "nutrition-log": "nutrition",
 }
-OUTSIDE_SCOPES = {data_type: area for data_type, area in SCOPE_AREAS.items()
-                  if not any(f".{area}." in scope for scope in SCOPES)}
 
 # Everything below is what the schemas don't say, measured against the live API on 2026-10-24
 # or taken from Google's guides. It is the only hand-kept part: when the API changes, an entry
@@ -109,6 +105,9 @@ NOTES = {
     "daily-sleep-temperature-derivations": ["Nightly skin temperature relative to the owner's own baseline."],
     "steps": ["Kept per minute. Use roll_up_data_points or daily_roll_up_data_points for totals."],
 }
+# Types Google lets apps write but not read, even with their read scope: it answers that only
+# create, update and batchDelete are supported.
+WRITE_ONLY = {"moods", "menstrual-period", "ovulation-test", "symptoms"}
 # Google ignores page_size for these: oxygen-saturation answers about a night of readings
 # (some 470) whatever page_size asks.
 UNPAGED = {"oxygen-saturation"}
@@ -128,6 +127,17 @@ GENERAL_NOTES = [
     "roll_up_data_points covers at most 14 days for heart-rate, active-minutes, total-calories and "
     "calories-in-heart-rate-zone, and 90 days for other types.",
 ]
+
+def not_readable(scopes):
+    """The data types these scopes can't read, and why; the tools answer for them without asking."""
+    outside = {data_type: f"needs googlehealth.{area}.readonly, which this connector doesn't ask Google for"
+               for data_type, area in SCOPE_AREAS.items() if not any(f".{area}." in s for s in scopes)}
+    return {**outside, **{data_type: "Google lets apps write this type, but not read it"
+                          for data_type in WRITE_ONLY}}
+
+
+NOT_READABLE = not_readable(SCOPES)
+
 
 class Failure(Exception):
     """A tool's expected failure; run() turns it into a result for the AI."""
@@ -251,9 +261,8 @@ def register(server, health, owner_url, connector, security):
         return answer
 
     def readable(data_type):
-        if data_type in OUTSIDE_SCOPES:
-            raise Failure("not_readable", f"{data_type} needs the googlehealth.{OUTSIDE_SCOPES[data_type]}"
-                          ".readonly scope, which this connector doesn't ask Google for.")
+        if data_type in NOT_READABLE:
+            raise Failure("not_readable", f"{data_type}: {NOT_READABLE[data_type]}.")
 
     def data_type_path(data_type):
         return f"users/me/dataTypes/{data_type}/dataPoints"
@@ -294,9 +303,8 @@ def register(server, health, owner_url, connector, security):
             types = catalog(document)
             if data_type is None:
                 return {"data_types": {name: entry.get("kind") for name, entry in sorted(types.items())
-                                       if name not in OUTSIDE_SCOPES},
-                        "not_readable": {name: f"needs googlehealth.{area}.readonly, which this connector "
-                                         "doesn't ask for" for name, area in sorted(OUTSIDE_SCOPES.items())},
+                                       if name not in NOT_READABLE},
+                        "not_readable": dict(sorted(NOT_READABLE.items())),
                         "notes": GENERAL_NOTES, "api_revision": document.get("revision"),
                         "owner_url": owner_url, "connector": connector}
             if data_type not in types:

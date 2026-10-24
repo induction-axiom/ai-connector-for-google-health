@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 from fakes import BASE, CLIENT, CONNECT_ORIGIN, HEALTH_ACCOUNT, OWNER, MemoryConnection
 from google_health import CONNECT_SCOPES, SCOPES
 from oauth import key
-from tools import MAX_RESULT_CHARS, OUTSIDE_SCOPES, SCOPE_AREAS
+from tools import MAX_RESULT_CHARS, NOT_READABLE, SCOPE_AREAS, WRITE_ONLY, not_readable
 import test_oauth
 
 OWNER_HEADERS = {"Origin": BASE, "Authorization": "Bearer synthetic-owner-login"}
@@ -97,19 +97,25 @@ class DescribeTests(Harness):
         total = self.call("describe_data_type", data_type="total-calories")["tools"]
         self.assertEqual((total["list_data_points"], total["reconcile_data_points"]), (None, None))
 
-    def test_every_data_type_is_readable_with_the_scopes_asked_for(self):
+    def test_only_write_only_types_are_unreadable_with_the_scopes_asked_for(self):
         result = self.call("describe_data_type")
-        self.assertEqual((len(result["data_types"]), result["not_readable"]), (44, {}))
+        self.assertEqual(set(result["not_readable"]), WRITE_ONLY)
+        self.assertEqual(len(result["data_types"]) + len(result["not_readable"]), 44)
         self.assertTrue(set(SCOPE_AREAS) <= set(result["data_types"]))
         for area in set(SCOPE_AREAS.values()):
             self.assertTrue(any(f".{area}.readonly" in scope for scope in SCOPES), area)
+        refused = self.call("reconcile_data_points", data_type="moods")
+        self.assertEqual((refused["error_code"], refused["detail"]),
+                         ("not_readable", "moods: Google lets apps write this type, but not read it."))
+        self.assertEqual(self.google.requests, [])
 
     def test_a_type_outside_the_scopes_is_not_asked_for(self):
         # As in a fork that asks Google for fewer scopes.
-        with patch.dict(OUTSIDE_SCOPES, {"electrocardiogram": "ecg"}):
+        fewer = not_readable([s for s in SCOPES if ".ecg." not in s])
+        self.assertIn("googlehealth.ecg.readonly", fewer["electrocardiogram"])
+        with patch.dict(NOT_READABLE, {"electrocardiogram": fewer["electrocardiogram"]}):
             result = self.call("describe_data_type")
             self.assertNotIn("electrocardiogram", result["data_types"])
-            self.assertIn("googlehealth.ecg.readonly", result["not_readable"]["electrocardiogram"])
             for tool in ("list_data_points", "reconcile_data_points", "describe_data_type"):
                 refused = self.call(tool, data_type="electrocardiogram")
                 self.assertEqual((refused["error_code"], refused["next_action"]),
@@ -251,6 +257,13 @@ class ConnectionTests(Harness):
         self.assertIn("revoked", result["detail"])
         self.assertEqual(self.store.get("google_last_failure")["code"], "google_health_disconnected")
 
+    def test_a_passing_503_is_asked_again(self):
+        self.call("get_resource", name="users/me/identity")
+        self.google.flaky = 2
+        self.assertTrue(self.call("reconcile_data_points", data_type="sleep")["ok"])
+        self.assertEqual(len(self.sent("reconcile")), 3)
+        self.assertIsNone(self.store.get("google_last_failure"))
+
     def test_google_down_is_retry_later(self):
         self.call("get_resource", name="users/me/identity")
         self.google.down = True
@@ -295,8 +308,7 @@ class DashboardTests(Harness):
         self.assertEqual(self.owner("/owner/status").json()["google"]["state"], "not_connected")
         self.connection.saved = MemoryConnection().saved
         status = self.owner("/owner/status").json()
-        self.assertEqual((status["google"]["state"], status["google"]["email"], status["google"]["missing_scopes"]),
-                         ("connected", OWNER["email"], []))
+        self.assertEqual((status["google"]["state"], status["google"]["email"]), ("connected", OWNER["email"]))
         self.assertEqual(status["diagnostics"]["connect_page"], CONNECT_ORIGIN + "/google-connect.html")
         self.assertNotIn("refresh-1", json.dumps(status))
         self.assertNotIn(CLIENT["client_secret"], json.dumps(status))
@@ -354,11 +366,10 @@ class DashboardTests(Harness):
         self.assertEqual(self.connect(), "no_refresh_token")
         self.assertEqual(self.connection.saved, CLIENT)
 
-    def test_partly_granted(self):
+    def test_a_partial_grant_connects_and_saves_what_was_granted(self):
         self.google.granted = [s for s in SCOPES if "sleep" in s]
-        self.assertEqual(self.connect(), "connected_partly")
-        missing = self.owner("/owner/status").json()["google"]["missing_scopes"]
-        self.assertEqual(len(missing), len(SCOPES) - 1)
+        self.assertEqual(self.connect(), "connected")
+        self.assertEqual(self.connection.saved["scopes"], self.google.granted)
 
     def test_disconnect_revokes_and_keeps_the_client(self):
         self.assertEqual(self.owner("/owner/google/disconnect").json()["result"], "disconnected")

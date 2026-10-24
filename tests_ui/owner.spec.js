@@ -23,10 +23,8 @@ const firebaseAuth = email => `
   };
 `;
 
-const SCOPES = ["sleep", "health_metrics_and_measurements", "activity_and_fitness", "profile", "settings"]
-  .map(area => `https://www.googleapis.com/auth/googlehealth.${area}.readonly`);
 const CLIENT_ID = "123456789012-abcdefghijklmnop.apps.googleusercontent.com";
-const CONNECTED = {state: "connected", client_id: CLIENT_ID, email: OWNER, connected_at: 1790000000, missing_scopes: []};
+const CONNECTED = {state: "connected", client_id: CLIENT_ID, email: OWNER, connected_at: 1790000000};
 
 function status(state) {
   return {
@@ -35,7 +33,7 @@ function status(state) {
     apps: [],
     diagnostics: {connector_version: "test", repository: "example/example", project_id: "your-project",
       connection_secret: "google-health-connection", auth_database: "(default)", mcp_endpoint: BASE + "/mcp",
-      connect_page: "https://your-project.firebaseapp.com/google-connect.html", scopes: SCOPES},
+      connect_page: "https://your-project.firebaseapp.com/google-connect.html"},
   };
 }
 
@@ -113,6 +111,8 @@ test("coming back from Google says what happened, once", async ({page}) => {
 
 test("disconnecting takes two clicks and keeps the client", async ({page}) => {
   const state = await openDashboard(page);
+  // While access works, the only action is to disconnect.
+  await expect(page.locator("#google-connect")).toBeHidden();
   const disconnect = page.locator("#google-rows button");
   await disconnect.click();
   await expect(disconnect).toHaveText("Confirm disconnect");
@@ -121,14 +121,6 @@ test("disconnecting takes two clicks and keeps the client", async ({page}) => {
   await expect(page.locator("#status-title")).toHaveText("Connect Google Health.");
   await expect(page.locator("#google-rows")).toContainText("Not connected");
   expect(state.sent).toEqual([["/owner/google/disconnect", {}]]);
-  expect(state.errors).toEqual([]);
-});
-
-test("data left out at Google is named, with a way to connect again", async ({page}) => {
-  const state = await openDashboard(page, {google: {...CONNECTED, missing_scopes: [SCOPES[1]]}});
-  await expect(page.locator("#google-rows")).toContainText("Not shared");
-  await expect(page.locator("#google-rows")).toContainText("Health metrics (heart rate, HRV, SpO2…)");
-  await expect(page.locator("#google-connect")).toHaveText("Connect again");
   expect(state.errors).toEqual([]);
 });
 

@@ -88,13 +88,15 @@ the answer on. It keeps no health data. Your project keeps its Google OAuth
 client and Google's refresh token, in Secret Manager, which only the connector
 can read; the AI app sign-ins you approved; and the last error Google gave.
 
-The connector asks Google for eleven read-only scopes: sleep; health metrics
+The connector asks Google for eight read-only scopes: sleep; health metrics
 and measurements (heart rate, HRV, SpO2, respiratory rate, temperature,
-weight…); activity and fitness; ECG; irregular rhythm notifications;
-mindfulness (moods); logged symptoms; reproductive health; nutrition (food and
-hydration); profile; and settings (which also covers paired devices). Google's
-page lets you leave any of them out, and the dashboard names the ones you did.
-It never asks for write scopes, or for exercise GPS routes.
+weight…); activity and fitness; ECG; irregular rhythm notifications; nutrition
+(food and hydration); profile; and settings (which also covers paired
+devices). It never asks for write scopes, or for exercise GPS routes. Moods,
+symptoms, periods and ovulation tests can't be read through the API even
+with their read scopes, so it doesn't ask for those either. If you leave a
+scope out on Google's page, the AI is told so when it asks for that data; to
+share it later, disconnect and connect again.
 
 ## The tools
 
@@ -124,12 +126,14 @@ What the connector adds to Google's answers, and nothing else:
   the top of `firebase/mcp/tools.py` (`NOTES`, `REFUSED`, `UNPAGED`), the one
   part kept by hand. A stale entry misleads the AI once, and Google's own error
   then says what the type supports.
-- **Types outside its scopes.** Some types, such as `electrocardiogram` and
-  `nutrition-log`, need a scope of their own. The connector asks for all of
-  them, but a fork that asks for fewer gets the rest listed under
-  `not_readable` by `describe_data_type`, and the tools answer `not_readable`
-  without asking Google, which refuses them in confusing ways (a 403, a 503,
-  or "List is not supported").
+- **Types it can't read.** `moods`, `symptoms`, `menstrual-period` and
+  `ovulation-test` can only be written through the API. `describe_data_type`
+  lists them under `not_readable`, with any type a fork's scopes leave out, and
+  the tools answer `not_readable` without asking Google, which refuses them in
+  confusing ways (a 403, a 503, or "List is not supported").
+- **Retries.** Google answers a 5xx now and then for a request it answers a
+  moment later, so the connector asks twice more, after half a second and
+  then a second and a half, before it reports Google as unavailable.
 - **Short source-family names.** `data_source_family` takes `google-wearables`
   and the connector sends Google's full `users/me/dataSourceFamilies/…` name.
 - **Empty lists.** Google's JSON leaves out a list with nothing in it, so an

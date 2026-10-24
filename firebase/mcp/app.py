@@ -18,7 +18,7 @@ from starlette.routing import Route
 
 from config import Config
 from connection import SecretConnection
-from google_health import CONNECT_SCOPES, SCOPES, GoogleHealth, GoogleHealthError
+from google_health import CONNECT_SCOPES, GoogleHealth, GoogleHealthError
 from oauth import ConsentError, Provider, key, random_token
 from store import FirestoreStore
 import tools
@@ -370,8 +370,7 @@ def create_app(config, store, owner_verifier, connection, transport=None):
         facts = {"client_id": saved["client_id"]}
         if not saved.get("refresh_token"):
             return {"state": "not_connected", **facts}
-        facts.update({"email": saved.get("email"), "connected_at": saved.get("connected_at"),
-                      "missing_scopes": [s for s in SCOPES if s not in saved.get("scopes", [])]})
+        facts.update({"email": saved.get("email"), "connected_at": saved.get("connected_at")})
         try:
             health.call("GET", "users/me/identity")
             return {"state": "connected", **facts}
@@ -391,7 +390,6 @@ def create_app(config, store, owner_verifier, connection, transport=None):
                                              "connection_secret": config.connection_secret,
                                              "project_id": config.project_id,
                                              "connect_page": config.connect_page,
-                                             "scopes": list(SCOPES),
                                              "mcp_endpoint": config.resource}})
 
     def forget_token(saved):
@@ -438,7 +436,7 @@ def create_app(config, store, owner_verifier, connection, transport=None):
             return error.code
         connection.save({"client_id": saved["client_id"], "client_secret": saved["client_secret"],
                          **granted, "connected_at": time.time()})
-        return "connected" if len(granted["scopes"]) == len(SCOPES) else "connected_partly"
+        return "connected"
 
     async def google_exchange(request):
         """Google's answer, from the connect page. The custom header keeps it to scripts

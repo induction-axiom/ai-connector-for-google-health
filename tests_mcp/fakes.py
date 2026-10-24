@@ -11,7 +11,11 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firebase" / "mcp"))
 
+import google_health
 from google_health import SCOPES
+
+# Tests don't wait between retries.
+google_health.RETRY_WAITS = (0, 0)
 
 BASE = "https://connector.example"
 # Where the connect page runs, for the synthetic project the tests configure.
@@ -77,6 +81,7 @@ class FakeGoogle:
         self.revoked = set()
         self.access = {}  # access token → refresh token
         self.down = False
+        self.flaky = 0  # how many more API requests answer 503 before Google recovers
         self.unlinked = False
         self.granted = list(SCOPES)
         self.sends_refresh_token = True
@@ -154,7 +159,8 @@ class FakeGoogle:
         body = json.loads(request.content) if request.content else None
         self.requests.append({"method": request.method, "path": path, "params": dict(request.url.params),
                               "body": body, "api_method": name})
-        if self.down:
+        if self.down or self.flaky:
+            self.flaky = max(0, self.flaky - 1)
             return self.error(503, "UNAVAILABLE", "The service is currently unavailable.")
         token = request.headers.get("authorization", "").removeprefix("Bearer ")
         if token not in self.access:
