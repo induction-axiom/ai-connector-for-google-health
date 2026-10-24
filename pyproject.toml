@@ -1,0 +1,7 @@
+[project]
+name = "ghealth-connector"
+version = "0.1.0"
+requires-python = ">=3.13"
+description = "Self-hosted, read-only AI connector for the Google Health API"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
