@@ -35,8 +35,8 @@ SourceFamily = Annotated[Literal["all-sources", "google-wearables", "google-sour
                        "trackers only, no manual logs. google-sources: Google's own, including "
                        "manual logs and Health Connect."))]
 Fields = Annotated[str, Field(max_length=1000, pattern=r"^[A-Za-z0-9_,/()*]+$", description=(
-    "Google's partial-response mask, to get only what you need, such as "
-    "dataPoints(name,sleep(interval,summary)),nextPageToken"))]
+    "Google's partial-response mask, to get only what you need. Each tool's answer has its own "
+    "field names: describe_data_type gives a working mask for each."))]
 RESOURCES = ("users/me/identity, users/me/profile, users/me/settings, users/me/pairedDevices/{id}, "
              "or a data point's name, users/me/dataTypes/{data_type}/dataPoints/{id}")
 ResourceName = Annotated[str, Field(max_length=300, description=RESOURCES)]
@@ -63,7 +63,7 @@ NOTES = {
         "Filter on sleep.interval.civil_end_time (the local date the sleep ends) or "
         "sleep.interval.end_time; sleep has no start-time filter.",
         "At most 25 sleeps per page. For many nights, leave out the stages with fields such as "
-        "dataPoints(name,sleep(interval,type,summary,metadata)),nextPageToken, then read single nights in full.",
+        "dataPoints(dataPointName,sleep(interval,type,summary,metadata)),nextPageToken, then read single nights in full.",
         "type CLASSIC has AWAKE, RESTLESS and ASLEEP stages; STAGES has AWAKE, LIGHT, DEEP and REM. "
         "Don't compare stage minutes across the two.",
         "shortAwakenings and outOfBedSegments overlap the stages: adding them to stage minutes counts that time twice.",
@@ -81,8 +81,9 @@ NOTES = {
     "steps": ["Kept per minute. Use roll_up_data_points or daily_roll_up_data_points for totals."],
 }
 GENERAL_NOTES = [
-    "Every time has a physical form (UTC, with its utcOffset) and a civil form (the owner's local "
-    "clock). Daily types and daily_roll_up_data_points use civil dates.",
+    "Times are UTC with their utcOffset. list_data_points also gives each time in civil form (the "
+    "owner's local clock); reconcile_data_points doesn't. Daily types and daily_roll_up_data_points "
+    "use civil dates.",
     "int64 counts such as minutesAsleep are strings in JSON. Durations are strings such as \"300s\".",
     "Answers over the size limit come back as result_too_large: ask with a smaller page_size, a "
     "shorter range, fields, or a roll-up.",
@@ -110,14 +111,19 @@ def catalog(document):
     """Every data type the discovery document names, from the fields of DataPoint and of
     the two roll-up answers, which say which collection each field is for."""
     schemas = document["schemas"]
-    types = {}
+    types, by_field = {}, {}
     for field, prop in schemas["DataPoint"]["properties"].items():
         if "$ref" not in prop or field == "dataSource":
             continue
         found = re.search(r"`([a-z0-9-]+)` (\w+) data type", prop.get("description", ""))
-        types[found[1] if found else kebab(field)] = {
+        by_field[field] = found[1] if found else kebab(field)
+        types[by_field[field]] = {
             "field": field, "kind": found[2] if found else None, "schema": prop["$ref"],
             "description": prop.get("description")}
+    # ReconcileDataPoints answers in its own point, which holds only the types it merges.
+    for field, prop in schemas["ReconciledDataPoint"]["properties"].items():
+        if "$ref" in prop and field in by_field:
+            types[by_field[field]]["reconcile"] = True
     for answer, schema in (("roll_up", "RollupDataPoint"), ("daily_roll_up", "DailyRollupDataPoint")):
         for field, prop in schemas[schema]["properties"].items():
             if prop.get("$ref", "CivilDateTime") == "CivilDateTime":
@@ -154,6 +160,12 @@ def shape(node):
     return out
 
 
+def envelope(schema, field):
+    """A point's own fields, and only this data type's field of the many it may hold."""
+    return {**shape({k: v for k, v in schema.items() if k != "properties"}), "properties": {
+        k: shape(v) for k, v in schema["properties"].items() if "$ref" not in v or k in {field, "dataSource"}}}
+
+
 def method(document, *path):
     resource = document
     for name in path[:-1]:
@@ -166,7 +178,7 @@ def register(server, health, owner_url, connector, security):
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True,
                            openWorldHint=True)
 
-    def run(work):
+    def run(work, fields=None):
         try:
             result = {"ok": True, **work()}
         except (GoogleHealthError, Failure) as error:
@@ -176,6 +188,9 @@ def register(server, health, owner_url, connector, security):
                 result.update(error.extra)
             if error.detail:
                 result["detail"] = error.detail
+            if error.code == "request_rejected" and fields:
+                # Google names no argument; a mask with another tool's field names is the usual cause.
+                result["hint"] = "Check fields against the fields_example describe_data_type gives for this tool."
             if error.code in OWNER_ACTIONS:
                 result["owner_url"] = owner_url
         text = json.dumps(result, separators=(",", ":"), ensure_ascii=False)
@@ -203,9 +218,14 @@ def register(server, health, owner_url, connector, security):
         return {"filter": filter, "pageSize": page_size, "pageToken": page_token,
                 "dataSourceFamily": family(data_source_family), "fields": fields}
 
+    def listed(answer, items):
+        """Google's JSON leaves out an empty list; say it, so an empty answer reads as one."""
+        return {items: [], **answer}
+
     def roll_up(path, data_type, body, fields):
         body = {k: v for k, v in body.items() if v is not None}
-        return health.call("POST", data_type_path(data_type) + path, {"fields": fields}, body)
+        return listed(health.call("POST", data_type_path(data_type) + path, {"fields": fields}, body),
+                      "rollupDataPoints")
 
     @server.tool(annotations=read, meta=security)
     def describe_data_type(data_type: DataType | None = None) -> CallToolResult:
@@ -213,8 +233,9 @@ def register(server, health, owner_url, connector, security):
         discovery document. Call it before reading a data type for the first time.
 
         Without data_type: every data type, with its kind (interval, sample, session, daily,
-        or roll-up only), plus general notes. With data_type: its schema and every schema it
-        refers to, the roll-ups it supports, the filter syntax, and notes on reading it right.
+        or roll-up only), plus general notes. With data_type: which tools read it (null for a
+        tool that doesn't), each answer's point schema with a working fields mask, its schema
+        and every schema it refers to, the filter syntax, and notes on reading it right.
 
         owner_url is this deployment's own dashboard, where Google Health is connected. Give
         the owner that exact clickable link when they ask where to manage the connector.
@@ -228,17 +249,33 @@ def register(server, health, owner_url, connector, security):
                         "owner_url": owner_url, "connector": connector}
             if data_type not in types:
                 raise Failure("unknown_data_type", "Data types: " + ", ".join(sorted(types)))
-            entry = types[data_type]
+            entry, schemas = types[data_type], document["schemas"]
+            field = entry.get("field")
             names = [entry["schema"]] if "schema" in entry else []
             names += [entry[a]["schema"] for a in ("roll_up", "daily_roll_up") if a in entry]
+            found = referenced(schemas, names + ["DataSource"])
+            reads = {"list_data_points": None, "reconcile_data_points": None,
+                     "roll_up_data_points": None, "daily_roll_up_data_points": None}
+            if "schema" in entry:
+                found["DataPoint"] = envelope(schemas["DataPoint"], field)
+                reads["list_data_points"] = {"point": "DataPoint", "id_field": "name",
+                                             "fields_example": f"dataPoints(name,{field}),nextPageToken"}
+            if entry.get("reconcile"):
+                found["ReconciledDataPoint"] = envelope(schemas["ReconciledDataPoint"], field)
+                reads["reconcile_data_points"] = {
+                    "point": "ReconciledDataPoint", "id_field": "dataPointName",
+                    "fields_example": f"dataPoints(dataPointName,{field}),nextPageToken"}
+            for answer, tool in (("roll_up", "roll_up_data_points"), ("daily_roll_up", "daily_roll_up_data_points")):
+                if answer in entry:
+                    rolled = entry[answer]["field"]
+                    reads[tool] = {**entry[answer], "fields_example": f"rollupDataPoints(startTime,endTime,{rolled}),nextPageToken"
+                                   if answer == "roll_up" else f"rollupDataPoints(civilStartTime,civilEndTime,{rolled}),nextPageToken"}
             listing = method(document, "users", "dataTypes", "dataPoints", "list")["parameters"]
             return {"data_type": data_type, "kind": entry.get("kind"),
-                    "data_point_field": entry.get("field"), "data_point_schema": entry.get("schema"),
-                    "filter_name": data_type.replace("-", "_"),
-                    **{a: entry[a] for a in ("roll_up", "daily_roll_up") if a in entry},
+                    "data_point_field": field, "data_point_schema": entry.get("schema"),
+                    "filter_name": data_type.replace("-", "_"), "tools": reads,
                     "notes": NOTES.get(data_type, []) + GENERAL_NOTES,
-                    "filter_syntax": listing["filter"]["description"],
-                    "schemas": referenced(document["schemas"], names + ["DataSource"])}
+                    "filter_syntax": listing["filter"]["description"], "schemas": found}
         return run(work)
 
     @server.tool(annotations=read, meta=security)
@@ -248,12 +285,13 @@ def register(server, health, owner_url, connector, security):
                          fields: Fields | None = None) -> CallToolResult:
         """List a data type's points as stored, from every source, newest first.
 
-        Google's ListDataPoints, unchanged. Two devices that record the same thing give two
-        points: for sleep, and anything else more than one device records, prefer
-        reconcile_data_points. Continue with nextPageToken as page_token.
+        Google's ListDataPoints, unchanged. Each point's ID is name, and it says its
+        dataSource. Two devices that record the same thing give two points: for sleep, and
+        anything else more than one device records, prefer reconcile_data_points. Continue
+        with nextPageToken as page_token.
         """
-        return run(lambda: health.call("GET", data_type_path(data_type),
-                                       query(data_type, filter, page_size, page_token, data_source_family, fields)))
+        return run(lambda: listed(health.call("GET", data_type_path(data_type), query(
+            data_type, filter, page_size, page_token, data_source_family, fields)), "dataPoints"), fields)
 
     @server.tool(annotations=read, meta=security)
     def reconcile_data_points(data_type: DataType, filter: Filter | None = None, page_size: PageSize | None = None,
@@ -263,10 +301,12 @@ def register(server, health, owner_url, connector, security):
         """List a data type's points with overlapping ones from different sources merged
         into one, as the Google Health app shows them.
 
-        Google's ReconcileDataPoints, unchanged. Continue with nextPageToken as page_token.
+        Google's ReconcileDataPoints, unchanged. Its points differ from list_data_points':
+        the ID is dataPointName, and there is no dataSource and no civil time. Continue with
+        nextPageToken as page_token.
         """
-        return run(lambda: health.call("GET", data_type_path(data_type) + ":reconcile",
-                                       query(data_type, filter, page_size, page_token, data_source_family, fields)))
+        return run(lambda: listed(health.call("GET", data_type_path(data_type) + ":reconcile", query(
+            data_type, filter, page_size, page_token, data_source_family, fields)), "dataPoints"), fields)
 
     @server.tool(annotations=read, meta=security)
     def roll_up_data_points(
@@ -286,7 +326,7 @@ def register(server, health, owner_url, connector, security):
         """
         return run(lambda: roll_up(":rollUp", data_type, {
             "range": range, "windowSize": window_size, "dataSourceFamily": family(data_source_family),
-            "pageSize": page_size, "pageToken": page_token}, fields))
+            "pageSize": page_size, "pageToken": page_token}, fields), fields)
 
     @server.tool(annotations=read, meta=security)
     def daily_roll_up_data_points(
@@ -307,7 +347,7 @@ def register(server, health, owner_url, connector, security):
         return run(lambda: roll_up(":dailyRollUp", data_type, {
             "range": range, "windowSizeDays": window_size_days,
             "dataSourceFamily": family(data_source_family), "pageSize": page_size,
-            "pageToken": page_token}, fields))
+            "pageToken": page_token}, fields), fields)
 
     @server.tool(annotations=read, meta=security)
     def get_resource(name: ResourceName, fields: Fields | None = None) -> CallToolResult:
@@ -320,7 +360,7 @@ def register(server, health, owner_url, connector, security):
             if not READABLE.fullmatch(name):
                 raise Failure("invalid_arguments", "Readable: " + RESOURCES)
             return health.call("GET", name, {"fields": fields})
-        return run(work)
+        return run(work, fields)
 
     @server.tool(annotations=read, meta=security)
     def list_paired_devices(page_size: Annotated[int, Field(ge=1, le=100)] = 50,
@@ -330,8 +370,8 @@ def register(server, health, owner_url, connector, security):
 
         Google's ListPairedDevices, unchanged.
         """
-        return run(lambda: health.call("GET", "users/me/pairedDevices",
-                                       {"pageSize": page_size, "pageToken": page_token}))
+        return run(lambda: listed(health.call("GET", "users/me/pairedDevices",
+                                              {"pageSize": page_size, "pageToken": page_token}), "pairedDevices"))
 
     return {"describe_data_type": describe_data_type, "reconcile_data_points": reconcile_data_points,
             "get_resource": get_resource, "list_paired_devices": list_paired_devices}

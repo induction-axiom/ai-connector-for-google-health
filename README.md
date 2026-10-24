@@ -98,7 +98,7 @@ exercise GPS routes or reproductive health.
 
 | Tool | Google Health API method |
 |---|---|
-| `describe_data_type` | Reads Google's discovery document: every data type, and for one type its schema, roll-ups, filter syntax and notes |
+| `describe_data_type` | Reads Google's discovery document: every data type, and for one type which tools read it, each answer's shape with a working `fields` mask, its schema, filter syntax and notes |
 | `list_data_points` | `GET users/me/dataTypes/{type}/dataPoints` |
 | `reconcile_data_points` | `GET users/me/dataTypes/{type}/dataPoints:reconcile` |
 | `roll_up_data_points` | `POST users/me/dataTypes/{type}/dataPoints:rollUp` |
@@ -119,6 +119,13 @@ What the connector adds to Google's answers, and nothing else:
   kept by hand.
 - **Short source-family names.** `data_source_family` takes `google-wearables`
   and the connector sends Google's full `users/me/dataSourceFamilies/…` name.
+- **Empty lists.** Google's JSON leaves out a list with nothing in it, so an
+  empty answer would be just `{"ok": true}`. The connector adds the empty
+  `dataPoints`, `rollupDataPoints` or `pairedDevices`.
+- **A hint for a rejected `fields` mask.** Google only says "Request contains
+  an invalid argument". Points are named `name` in `list_data_points` but
+  `dataPointName` in `reconcile_data_points`, so the connector points to the
+  mask `describe_data_type` gives for each tool.
 
 Expected failures, such as an expired connection, come back as results with
 `error_code` and `next_action`, and a link to the dashboard when the owner

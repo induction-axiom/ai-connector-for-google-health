@@ -67,12 +67,31 @@ class DescribeTests(Harness):
         self.assertIn("sleep.interval.civil_end_time", result["filter_syntax"])
         self.assertTrue(any("reconcile_data_points" in note for note in result["notes"]))
 
+    def test_says_which_tools_read_a_type_and_how_their_answers_differ(self):
+        sleep = self.call("describe_data_type", data_type="sleep")
+        tools = sleep["tools"]
+        self.assertEqual((tools["roll_up_data_points"], tools["daily_roll_up_data_points"]), (None, None))
+        self.assertEqual((tools["list_data_points"]["id_field"], tools["reconcile_data_points"]["id_field"]),
+                         ("name", "dataPointName"))
+        self.assertEqual(tools["reconcile_data_points"]["fields_example"],
+                         "dataPoints(dataPointName,sleep),nextPageToken")
+        reconciled = sleep["schemas"]["ReconciledDataPoint"]["properties"]
+        self.assertEqual(set(reconciled), {"dataPointName", "sleep"})
+        self.assertEqual(set(sleep["schemas"]["DataPoint"]["properties"]), {"name", "dataSource", "sleep"})
+        # The notes' own examples work with the tool they're for.
+        for note in sleep["notes"]:
+            self.assertNotIn("dataPoints(name", note)
+
     def test_roll_ups_are_named_with_their_schema(self):
         result = self.call("describe_data_type", data_type="heart-rate")
-        self.assertEqual(result["roll_up"], {"field": "heartRate", "schema": "HeartRateRollupValue"})
+        roll_up = result["tools"]["roll_up_data_points"]
+        self.assertEqual((roll_up["field"], roll_up["schema"]), ("heartRate", "HeartRateRollupValue"))
         self.assertIn("HeartRateRollupValue", result["schemas"])
         hrv = self.call("describe_data_type", data_type="daily-heart-rate-variability")
-        self.assertEqual(hrv["daily_roll_up"]["field"], "heartRateVariabilityPersonalRange")
+        self.assertEqual(hrv["tools"]["daily_roll_up_data_points"]["field"], "heartRateVariabilityPersonalRange")
+        self.assertIsNone(self.call("describe_data_type", data_type="electrocardiogram")["tools"]["reconcile_data_points"])
+        total = self.call("describe_data_type", data_type="total-calories")["tools"]
+        self.assertEqual((total["list_data_points"], total["reconcile_data_points"]), (None, None))
 
     def test_unknown_data_type(self):
         result = self.call("describe_data_type", data_type="sleeps")
@@ -85,16 +104,29 @@ class ReadTests(Harness):
         result = self.call("reconcile_data_points", data_type="sleep", page_size=3,
                            filter='sleep.interval.civil_end_time >= "2026-10-15"',
                            data_source_family="google-wearables",
-                           fields="dataPoints(name,sleep(interval,summary)),nextPageToken")
-        self.assertEqual(result, {"ok": True, "dataPoints": self.google.nights[:3], "nextPageToken": "3"})
+                           fields="dataPoints(dataPointName,sleep(interval,summary)),nextPageToken")
+        reconciled = [{"dataPointName": n["name"], "sleep": n["sleep"]} for n in self.google.nights[:3]]
+        self.assertEqual(result, {"ok": True, "dataPoints": reconciled, "nextPageToken": "3"})
         request = self.sent("reconcile")[0]
         self.assertEqual(request["path"], "v4/users/me/dataTypes/sleep/dataPoints:reconcile")
         self.assertEqual(request["params"], {
             "filter": 'sleep.interval.civil_end_time >= "2026-10-15"', "pageSize": "3",
             "dataSourceFamily": "users/me/dataSourceFamilies/google-wearables",
-            "fields": "dataPoints(name,sleep(interval,summary)),nextPageToken"})
+            "fields": "dataPoints(dataPointName,sleep(interval,summary)),nextPageToken"})
         more = self.call("reconcile_data_points", data_type="sleep", page_size=3, page_token="3")
-        self.assertEqual(more["dataPoints"], self.google.nights[3:6])
+        self.assertEqual([p["dataPointName"] for p in more["dataPoints"]], [n["name"] for n in self.google.nights[3:6]])
+
+    def test_a_rejected_fields_mask_points_to_describe(self):
+        result = self.call("reconcile_data_points", data_type="sleep", fields="dataPoints(name,sleep)")
+        self.assertEqual((result["error_code"], result["detail"]),
+                         ("request_rejected", "Request contains an invalid argument."))
+        self.assertIn("fields_example", result["hint"])
+        self.assertNotIn("hint", self.call("list_data_points", data_type="sleep", page_size=100))
+
+    def test_an_empty_answer_has_an_empty_list(self):
+        self.google.nights = []
+        self.assertEqual(self.call("list_data_points", data_type="sleep"), {"ok": True, "dataPoints": []})
+        self.assertEqual(self.call("reconcile_data_points", data_type="sleep"), {"ok": True, "dataPoints": []})
 
     def test_list_leaves_out_what_the_ai_left_out(self):
         self.call("list_data_points", data_type="sleep")
@@ -297,7 +329,7 @@ class DashboardTests(Harness):
 
     def test_preview_shows_what_the_ai_sees(self):
         result = self.owner("/owner/preview", {"target": "reconcile_data_points"}).json()
-        self.assertEqual(result["dataPoints"], self.google.nights[:1])
+        self.assertEqual(result["dataPoints"][0]["dataPointName"], self.google.nights[0]["name"])
         self.assertIn("sleep", self.owner("/owner/preview", {"target": "describe_data_type"}).json()["data_types"])
         self.assertEqual(self.owner("/owner/preview", {"target": "list_data_points"}).status_code, 400)
 

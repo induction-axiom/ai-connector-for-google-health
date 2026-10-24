@@ -175,13 +175,20 @@ class FakeGoogle:
         if verb in {":rollUp", ":dailyRollUp"}:
             return httpx.Response(200, json={"rollupDataPoints": [
                 {"startTime": body["range"].get("startTime"), "heartRate": {"beatsPerMinuteAvg": 61.5}}]})
-        size = int(request.url.params.get("pageSize", 1440))
+        # Google's defaults: 1440 points, and 25 for sleep.
+        size = int(request.url.params.get("pageSize", 25 if data_type == "sleep" else 1440))
+        fields = request.url.params.get("fields", "")
         if data_type == "sleep":
             if size > 25:
                 return self.error(400, "INVALID_ARGUMENT", "Page size for sleep must be at most 25.")
+            # A ReconciledDataPoint is named dataPointName, and has no dataSource.
+            if verb == ":reconcile" and "dataPoints(name" in fields:
+                return self.error(400, "INVALID_ARGUMENT", "Request contains an invalid argument.")
             start = int(request.url.params.get("pageToken", 0))
             page = self.nights[start:start + size]
-            answer = {"dataPoints": page}
+            if verb == ":reconcile":
+                page = [{"dataPointName": n["name"], "sleep": n["sleep"]} for n in page]
+            answer = {"dataPoints": page} if page else {}  # proto3 JSON leaves out an empty list
             if start + size < len(self.nights):
                 answer["nextPageToken"] = str(start + size)
             return httpx.Response(200, json=answer)
