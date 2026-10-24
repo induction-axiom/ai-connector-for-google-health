@@ -192,6 +192,8 @@ class FakeGoogle:
             if start + size < len(self.nights):
                 answer["nextPageToken"] = str(start + size)
             return httpx.Response(200, json=answer)
+        if data_type == "steps":
+            size = self.heart_points  # Google ignores page_size for steps
         points = [{"dataSource": {"platform": "FITBIT"}, "heartRate": {
             "beatsPerMinute": "62", "sampleTime": {"physicalTime": f"2026-10-20T03:{i // 60 % 60:02d}:{i % 60:02d}Z",
                                                    "utcOffset": "-14400s"}}}

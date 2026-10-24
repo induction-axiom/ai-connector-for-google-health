@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fakes import BASE, CLIENT, CONNECT_ORIGIN, HEALTH_ACCOUNT, OWNER, MemoryConnection
 from google_health import CONNECT_SCOPES, SCOPES
+from tools import OUTSIDE_SCOPES
 from oauth import key
 from tools import MAX_RESULT_CHARS
 import test_oauth
@@ -87,11 +88,39 @@ class DescribeTests(Harness):
         roll_up = result["tools"]["roll_up_data_points"]
         self.assertEqual((roll_up["field"], roll_up["schema"]), ("heartRate", "HeartRateRollupValue"))
         self.assertIn("HeartRateRollupValue", result["schemas"])
-        hrv = self.call("describe_data_type", data_type="daily-heart-rate-variability")
-        self.assertEqual(hrv["tools"]["daily_roll_up_data_points"]["field"], "heartRateVariabilityPersonalRange")
-        self.assertIsNone(self.call("describe_data_type", data_type="electrocardiogram")["tools"]["reconcile_data_points"])
+        steps = self.call("describe_data_type", data_type="steps")["tools"]["daily_roll_up_data_points"]
+        self.assertEqual((steps["field"], steps["fields_example"]),
+                         ("steps", "rollupDataPoints(civilStartTime,civilEndTime,steps),nextPageToken"))
+        # The discovery document has a daily roll-up for it, but Google refuses one.
+        hrv = self.call("describe_data_type", data_type="daily-heart-rate-variability")["tools"]
+        self.assertIsNone(hrv["daily_roll_up_data_points"])
         total = self.call("describe_data_type", data_type="total-calories")["tools"]
         self.assertEqual((total["list_data_points"], total["reconcile_data_points"]), (None, None))
+
+    def test_types_outside_the_scopes_are_named_and_not_asked_for(self):
+        result = self.call("describe_data_type")
+        self.assertNotIn("electrocardiogram", result["data_types"])
+        self.assertIn("googlehealth.ecg.readonly", result["not_readable"]["electrocardiogram"])
+        self.assertEqual(set(result["not_readable"]), set(OUTSIDE_SCOPES))
+        # Each is a real data type, and needs a scope this connector really doesn't ask for.
+        catalog_types = set(result["data_types"]) | set(result["not_readable"])
+        self.assertEqual(len(catalog_types), 44)
+        for area in set(OUTSIDE_SCOPES.values()):
+            self.assertFalse(any(f".{area}." in scope for scope in SCOPES), area)
+        for tool, arguments in (("list_data_points", {}), ("reconcile_data_points", {}),
+                                ("describe_data_type", {})):
+            refused = self.call(tool, data_type="electrocardiogram", **arguments)
+            self.assertEqual((refused["error_code"], refused["next_action"]), ("not_readable", "use_another_data_type"))
+        self.assertNotIn("owner_url", refused)
+        self.assertEqual(self.google.requests, [])
+
+    def test_answers_google_refuses_are_null(self):
+        self.assertIsNone(self.call("describe_data_type", data_type="floors")["tools"]["list_data_points"])
+        level = self.call("describe_data_type", data_type="activity-level")["tools"]
+        self.assertEqual((level["roll_up_data_points"], level["daily_roll_up_data_points"]), (None, None))
+        self.assertIsNotNone(level["list_data_points"])
+        self.assertTrue(self.call("describe_data_type", data_type="oxygen-saturation")["ignores_page_size"])
+        self.assertFalse(self.call("describe_data_type", data_type="heart-rate")["ignores_page_size"])
 
     def test_unknown_data_type(self):
         result = self.call("describe_data_type", data_type="sleeps")
@@ -148,6 +177,13 @@ class ReadTests(Harness):
         fits = self.call("list_data_points", data_type="heart-rate", page_size=result["page_size_that_fits"])
         self.assertTrue(fits["ok"])
         self.assertEqual(len(fits["dataPoints"]), result["page_size_that_fits"])
+
+    def test_too_large_without_paging_asks_for_a_shorter_range(self):
+        self.google.heart_points = 1440
+        result = self.call("list_data_points", data_type="steps", page_size=5)
+        self.assertEqual((result["error_code"], result["items_in_answer"]), ("result_too_large", 1440))
+        self.assertNotIn("page_size_that_fits", result)
+        self.assertIn("page_size of 5", result["detail"])
 
     def test_roll_ups_send_googles_request_body(self):
         window = {"startTime": "2026-10-20T00:00:00Z", "endTime": "2026-10-20T08:00:00Z"}

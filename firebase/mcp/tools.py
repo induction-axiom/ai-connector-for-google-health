@@ -26,8 +26,8 @@ Filter = Annotated[str, Field(max_length=2000, description=(
     "names are snake_case (heart_rate), unlike the data type. describe_data_type gives the "
     "fields each type supports."))]
 PageSize = Annotated[int, Field(ge=1, le=10000, description=(
-    "At most this many points. Google's default is 1440, and 25 for sleep and exercise, "
-    "which allow no more."))]
+    "At most this many points, for most types. Google's default varies (50 for heart-rate, 25 "
+    "for sleep); sleep and exercise allow no more than 25."))]
 PageToken = Annotated[str, Field(max_length=4096, description=(
     "nextPageToken from the previous answer; keep every other argument the same"))]
 SourceFamily = Annotated[Literal["all-sources", "google-wearables", "google-sources", "self-sources"],
@@ -50,19 +50,40 @@ NEXT_ACTIONS = {
     "google_rejected": "tell_owner", "rate_limited": "retry_later",
     "request_rejected": "fix_arguments", "not_found": "check_ids", "unknown_data_type": "fix_arguments",
     "permission_denied": "tell_owner", "invalid_arguments": "fix_arguments",
-    "result_too_large": "ask_for_less",
+    "result_too_large": "ask_for_less", "not_readable": "use_another_data_type",
 }
 # The codes that need the owner to act in the dashboard.
 OWNER_ACTIONS = {"not_connected", "google_health_disconnected", "client_invalid", "permission_denied"}
 
-# What the schemas don't say, learned from Google's guides. The only hand-kept part: when the
-# API changes, a note may go stale, but no tool breaks.
+# The data types outside this connector's read scopes (google_health.SCOPES), by the scope
+# area each needs. Google refuses them in several ways (403, 503, or "List is not supported"),
+# so the tools say so without asking.
+OUTSIDE_SCOPES = {
+    "electrocardiogram": "ecg", "irregular-rhythm-notification": "irn",
+    "food": "nutrition", "food-measurement-unit": "nutrition", "hydration-log": "nutrition",
+    "nutrition-log": "nutrition", "moods": "mindfulness", "menstrual-period": "reproductive_health",
+    "ovulation-test": "reproductive_health", "symptoms": "logged_symptoms",
+}
+
+# Everything below is what the schemas don't say, measured against the live API on 2026-10-24
+# or taken from Google's guides. It is the only hand-kept part: when the API changes, an entry
+# may go stale, but no tool breaks, and Google's own errors still say what went wrong.
+
+# Answers the discovery document describes but Google refuses; its error names what the type
+# does support.
+REFUSED = {
+    "floors": {"list_data_points"},
+    "activity-level": {"roll_up_data_points", "daily_roll_up_data_points"},
+    "daily-heart-rate-variability": {"daily_roll_up_data_points"},
+    "daily-resting-heart-rate": {"daily_roll_up_data_points"},
+}
 NOTES = {
     "sleep": [
         "Use reconcile_data_points: list_data_points returns each source's copy, so one night can appear twice.",
         "Filter on sleep.interval.civil_end_time (the local date the sleep ends) or "
         "sleep.interval.end_time; sleep has no start-time filter.",
-        "At most 25 sleeps per page. For many nights, leave out the stages with fields such as "
+        "A night with its stages is about 6 to 7 KB, so a full page of 25 is over the size limit. For "
+        "many nights, leave out the stages with fields such as "
         "dataPoints(dataPointName,sleep(interval,type,summary,metadata)),nextPageToken, then read single nights in full.",
         "type CLASSIC has AWAKE, RESTLESS and ASLEEP stages; STAGES has AWAKE, LIGHT, DEEP and REM. "
         "Don't compare stage minutes across the two.",
@@ -71,26 +92,40 @@ NOTES = {
         "minutesToFallAsleep is often 0 for automatically detected sleep; it isn't a measured sleep latency.",
     ],
     "heart-rate": [
-        "Kept per second: one night is tens of thousands of points. Use roll_up_data_points with a "
-        "window_size such as 300s (at most 14 days per request) rather than listing points.",
+        "Dense: about 325 bytes a point, so a page of 1440 is about 470 KB. Use roll_up_data_points "
+        "with a window_size such as 300s (at most 14 days per request) rather than listing points.",
+        "To list points anyway, drop the civil times with fields such as "
+        "dataPoints(heartRate(beatsPerMinute,sampleTime(physicalTime,utcOffset))),nextPageToken.",
     ],
     "heart-rate-variability": ["Single readings, mostly during sleep. daily-heart-rate-variability is the nightly summary."],
-    "oxygen-saturation": ["Kept per minute, mostly during sleep. Invalid readings are dropped, so gaps are normal."],
+    "oxygen-saturation": [
+        "Kept per minute, mostly during sleep. Invalid readings are dropped, so gaps are normal.",
+        "A page is about a night of readings whatever page_size asks; narrow by time range instead.",
+        "reconcile_data_points can answer with empty pages here; list_data_points has the readings.",
+    ],
     "respiratory-rate-sleep-summary": ["One summary per sleep. daily-respiratory-rate is the daily value."],
     "daily-sleep-temperature-derivations": ["Nightly skin temperature relative to the owner's own baseline."],
     "steps": ["Kept per minute. Use roll_up_data_points or daily_roll_up_data_points for totals."],
 }
+# Google ignores page_size for these: oxygen-saturation answers about a night of readings
+# (some 470) whatever page_size asks.
+UNPAGED = {"oxygen-saturation"}
 GENERAL_NOTES = [
-    "Times are UTC with their utcOffset. list_data_points also gives each time in civil form (the "
-    "owner's local clock); reconcile_data_points doesn't. Daily types and daily_roll_up_data_points "
-    "use civil dates.",
+    "Sessions (sleep, exercise) give times only in UTC, with their utcOffset. Samples, intervals and "
+    "daily types also give civil times (the owner's local clock) as {date: {year, month, day}, time: "
+    "{hours, minutes, seconds}}, about a third of each point: leave them out with fields when UTC is enough.",
+    "Only some types give a point an ID (sleep, exercise, weight, height, body-fat, "
+    "respiratory-rate-sleep-summary): name in list_data_points, dataPointName in reconcile_data_points.",
+    "Keep paging while nextPageToken is present: pages are often short, and can be empty. page_size "
+    "is a maximum for most types, but oxygen-saturation always answers about a night of readings, "
+    "and steps, distance and active-minutes have at times answered hundreds of points for a page_size "
+    "of 5: narrow those by time range.",
     "int64 counts such as minutesAsleep are strings in JSON. Durations are strings such as \"300s\".",
     "Answers over the size limit come back as result_too_large: ask with a smaller page_size, a "
     "shorter range, fields, or a roll-up.",
     "roll_up_data_points covers at most 14 days for heart-rate, active-minutes, total-calories and "
     "calories-in-heart-rate-zone, and 90 days for other types.",
 ]
-
 
 class Failure(Exception):
     """A tool's expected failure; run() turns it into a result for the AI."""
@@ -178,7 +213,7 @@ def register(server, health, owner_url, connector, security):
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True,
                            openWorldHint=True)
 
-    def run(work, fields=None):
+    def run(work, fields=None, page_size=None):
         try:
             result = {"ok": True, **work()}
         except (GoogleHealthError, Failure) as error:
@@ -195,18 +230,28 @@ def register(server, health, owner_url, connector, security):
                 result["owner_url"] = owner_url
         text = json.dumps(result, separators=(",", ":"), ensure_ascii=False)
         if len(text) > MAX_RESULT_CHARS:
-            text = json.dumps(too_large(result, len(text)), separators=(",", ":"))
+            text = json.dumps(too_large(result, len(text), page_size), separators=(",", ":"))
         return CallToolResult(content=[TextContent(type="text", text=text)])
 
-    def too_large(result, size):
+    def too_large(result, size, page_size):
         items = next((v for v in result.values() if isinstance(v, list)), [])
         answer = {"ok": False, "error_code": "result_too_large", "next_action": "ask_for_less",
                   "result_chars": size, "limit_chars": MAX_RESULT_CHARS, "items_in_answer": len(items),
                   "detail": "Ask for less: a smaller page_size, then page_token for more; a shorter "
                             "time range; fields to keep only what you need; or a roll-up."}
-        if len(items) > 1:
+        if page_size is not None and len(items) > page_size:
+            # A smaller page_size won't help a type Google doesn't page by it.
+            answer["detail"] = (f"Google answered {len(items)} points for a page_size of {page_size}, so "
+                                "page_size doesn't limit this type: narrow the filter's time range, use "
+                                "fields, or a roll-up.")
+        elif len(items) > 1:
             answer["page_size_that_fits"] = max(1, len(items) * MAX_RESULT_CHARS * 9 // (size * 10))
         return answer
+
+    def readable(data_type):
+        if data_type in OUTSIDE_SCOPES:
+            raise Failure("not_readable", f"{data_type} needs the googlehealth.{OUTSIDE_SCOPES[data_type]}"
+                          ".readonly scope, which this connector doesn't ask Google for.")
 
     def data_type_path(data_type):
         return f"users/me/dataTypes/{data_type}/dataPoints"
@@ -215,6 +260,7 @@ def register(server, health, owner_url, connector, security):
         return name and "users/me/dataSourceFamilies/" + name
 
     def query(data_type, filter, page_size, page_token, data_source_family, fields):
+        readable(data_type)
         return {"filter": filter, "pageSize": page_size, "pageToken": page_token,
                 "dataSourceFamily": family(data_source_family), "fields": fields}
 
@@ -223,6 +269,7 @@ def register(server, health, owner_url, connector, security):
         return {items: [], **answer}
 
     def roll_up(path, data_type, body, fields):
+        readable(data_type)
         body = {k: v for k, v in body.items() if v is not None}
         return listed(health.call("POST", data_type_path(data_type) + path, {"fields": fields}, body),
                       "rollupDataPoints")
@@ -244,11 +291,15 @@ def register(server, health, owner_url, connector, security):
             document = health.discovery()
             types = catalog(document)
             if data_type is None:
-                return {"data_types": {name: entry.get("kind") for name, entry in sorted(types.items())},
+                return {"data_types": {name: entry.get("kind") for name, entry in sorted(types.items())
+                                       if name not in OUTSIDE_SCOPES},
+                        "not_readable": {name: f"needs googlehealth.{area}.readonly, which this connector "
+                                         "doesn't ask for" for name, area in sorted(OUTSIDE_SCOPES.items())},
                         "notes": GENERAL_NOTES, "api_revision": document.get("revision"),
                         "owner_url": owner_url, "connector": connector}
             if data_type not in types:
                 raise Failure("unknown_data_type", "Data types: " + ", ".join(sorted(types)))
+            readable(data_type)
             entry, schemas = types[data_type], document["schemas"]
             field = entry.get("field")
             names = [entry["schema"]] if "schema" in entry else []
@@ -270,10 +321,13 @@ def register(server, health, owner_url, connector, security):
                     rolled = entry[answer]["field"]
                     reads[tool] = {**entry[answer], "fields_example": f"rollupDataPoints(startTime,endTime,{rolled}),nextPageToken"
                                    if answer == "roll_up" else f"rollupDataPoints(civilStartTime,civilEndTime,{rolled}),nextPageToken"}
+            for tool in REFUSED.get(data_type, ()):
+                reads[tool] = None
             listing = method(document, "users", "dataTypes", "dataPoints", "list")["parameters"]
             return {"data_type": data_type, "kind": entry.get("kind"),
                     "data_point_field": field, "data_point_schema": entry.get("schema"),
                     "filter_name": data_type.replace("-", "_"), "tools": reads,
+                    "ignores_page_size": data_type in UNPAGED,
                     "notes": NOTES.get(data_type, []) + GENERAL_NOTES,
                     "filter_syntax": listing["filter"]["description"], "schemas": found}
         return run(work)
@@ -285,13 +339,13 @@ def register(server, health, owner_url, connector, security):
                          fields: Fields | None = None) -> CallToolResult:
         """List a data type's points as stored, from every source, newest first.
 
-        Google's ListDataPoints, unchanged. Each point's ID is name, and it says its
-        dataSource. Two devices that record the same thing give two points: for sleep, and
-        anything else more than one device records, prefer reconcile_data_points. Continue
-        with nextPageToken as page_token.
+        Google's ListDataPoints, unchanged. Each point says its dataSource, and has an ID,
+        name, where its type has one. Two devices that record the same thing give two points:
+        for sleep, and anything else more than one device records, prefer
+        reconcile_data_points. Continue with nextPageToken as page_token.
         """
         return run(lambda: listed(health.call("GET", data_type_path(data_type), query(
-            data_type, filter, page_size, page_token, data_source_family, fields)), "dataPoints"), fields)
+            data_type, filter, page_size, page_token, data_source_family, fields)), "dataPoints"), fields, page_size)
 
     @server.tool(annotations=read, meta=security)
     def reconcile_data_points(data_type: DataType, filter: Filter | None = None, page_size: PageSize | None = None,
@@ -302,11 +356,11 @@ def register(server, health, owner_url, connector, security):
         into one, as the Google Health app shows them.
 
         Google's ReconcileDataPoints, unchanged. Its points differ from list_data_points':
-        the ID is dataPointName, and there is no dataSource and no civil time. Continue with
-        nextPageToken as page_token.
+        no dataSource, and an ID, where the type has one, is dataPointName. A page can be
+        empty and still have a nextPageToken: continue with it as page_token.
         """
         return run(lambda: listed(health.call("GET", data_type_path(data_type) + ":reconcile", query(
-            data_type, filter, page_size, page_token, data_source_family, fields)), "dataPoints"), fields)
+            data_type, filter, page_size, page_token, data_source_family, fields)), "dataPoints"), fields, page_size)
 
     @server.tool(annotations=read, meta=security)
     def roll_up_data_points(

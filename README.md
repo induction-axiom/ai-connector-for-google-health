@@ -113,10 +113,20 @@ What the connector adds to Google's answers, and nothing else:
   there were and a `page_size_that_fits`, and asks again for less: a smaller
   page, a shorter range, a `fields` mask, or a roll-up. Heart rate is kept per
   second, so this matters.
-- **Notes.** `describe_data_type` adds a few notes Google's schemas don't
-  carry, such as using `reconcile_data_points` for sleep so one night isn't
-  counted twice. They live in `NOTES` in `firebase/mcp/tools.py`, the one part
-  kept by hand.
+- **What the schemas don't say.** `describe_data_type` adds notes, such as
+  using `reconcile_data_points` for sleep so one night isn't counted twice, and
+  marks answers Google refuses although its discovery document describes them
+  (a roll-up of `activity-level`, say). Most of these were measured against the
+  live API; Google's discovery document also promises civil times on sleep,
+  and the default page sizes, differently from what it answers. They live at
+  the top of `firebase/mcp/tools.py` (`NOTES`, `REFUSED`, `UNPAGED`), the one
+  part kept by hand. A stale entry misleads the AI once, and Google's own error
+  then says what the type supports.
+- **Types outside its scopes.** Ten types, such as `electrocardiogram` and
+  `nutrition-log`, need scopes the connector doesn't ask for.
+  `describe_data_type` lists them under `not_readable`, and the tools answer
+  `not_readable` without asking Google, which refuses them in confusing ways
+  (a 403, a 503, or "List is not supported").
 - **Short source-family names.** `data_source_family` takes `google-wearables`
   and the connector sends Google's full `users/me/dataSourceFamilies/…` name.
 - **Empty lists.** Google's JSON leaves out a list with nothing in it, so an
