@@ -309,7 +309,6 @@ class DashboardTests(Harness):
         self.connection.saved = MemoryConnection().saved
         status = self.owner("/owner/status").json()
         self.assertEqual((status["google"]["state"], status["google"]["email"]), ("connected", OWNER["email"]))
-        self.assertEqual(status["diagnostics"]["connect_page"], CONNECT_ORIGIN + "/google-connect.html")
         self.assertNotIn("refresh-1", json.dumps(status))
         self.assertNotIn(CLIENT["client_secret"], json.dumps(status))
         self.google.unlinked = True

@@ -151,17 +151,12 @@ function renderStatus() {
   el("primary-action").dataset.action = state.action;
   el("primary-action").textContent = {guide: "Connect an AI app", update: "How to run the setup"}[state.action] || "Check again";
   // While not connected, the panel's Connect button is the action.
-  el("primary-action").classList.toggle("hidden", state.action === "connect");
+  el("hero-actions").classList.toggle("hidden", state.action === "connect");
   renderGoogle(google, state);
-  // Only problems are shown: Google not answering now, or a failure in the last week.
-  const connected = google.state === "connected";
-  const down = google.state && !connected && !["no_client", "not_connected"].includes(google.state);
-  const recent = failure && Date.now() / 1000 - failure.at < PROBLEM_DAYS * 86400;
-  el("fact-live").textContent = GOOGLE_COPY[google.state] || google.state;
-  el("fact-live-row").classList.toggle("hidden", !down);
+  // A failure in the last week, once Google answers again; while it doesn't, the page says so above.
+  const recent = google.state === "connected" && failure && Date.now() / 1000 - failure.at < PROBLEM_DAYS * 86400;
   el("fact-last-error").textContent = recent ? `${GOOGLE_COPY[failure.code] || failure.code}, ${ago(failure.at)}` : "";
-  el("fact-last-error-row").classList.toggle("hidden", !recent);
-  el("google-facts").classList.toggle("hidden", !down && !recent);
+  el("google-facts").classList.toggle("hidden", !recent);
   el("apps-list").replaceChildren(...(apps.length ? apps.map(appRow) : [emptyRow("No apps are connected yet.")]));
 
   const diagnostics = status.diagnostics || {};
@@ -313,39 +308,13 @@ function emptyRow(text) {
 }
 
 function appRow(app) {
-  const row = document.createElement("li");
-  row.className = "row";
-  const name = document.createElement("div");
-  const title = document.createElement("strong");
-  title.textContent = appName(app);
-  const detail = document.createElement("span");
   const connected = monthDay(app.connected_at);
-  detail.textContent = [connected ? "Connected " + connected : "Connected",
-    app.last_used_at && "Last used " + ago(app.last_used_at)].filter(Boolean).join(" · ");
-  name.append(title, detail);
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "link-button danger";
-  button.textContent = "Disconnect";
-  // Two-step: the first click asks, the second one disconnects.
-  button.onclick = async () => {
-    if (!button.dataset.confirm) {
-      button.dataset.confirm = "1";
-      button.textContent = "Confirm disconnect";
-      return;
-    }
-    button.disabled = true;
-    try {
+  return textRow(appName(app), [connected ? "Connected " + connected : "Connected",
+    app.last_used_at && "Last used " + ago(app.last_used_at)].filter(Boolean).join(" · "),
+    confirmButton("Disconnect", "Confirm disconnect", async () => {
       await api("/owner/apps/disconnect", {client_id: app.client_id});
       await loadStatus();
-    } catch (error) {
-      if (error instanceof OwnerSessionExpired) return expireSession();
-      button.textContent = "Try again";
-      button.disabled = false;
-    }
-  };
-  row.append(name, button);
-  return row;
+    }));
 }
 
 async function copyText(value, button) {

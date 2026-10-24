@@ -32,8 +32,7 @@ function status(state) {
     last_failure: state.lastFailure,
     apps: [],
     diagnostics: {connector_version: "test", repository: "example/example", project_id: "your-project",
-      connection_secret: "google-health-connection", auth_database: "(default)", mcp_endpoint: BASE + "/mcp",
-      connect_page: "https://your-project.firebaseapp.com/google-connect.html"},
+      connection_secret: "google-health-connection", auth_database: "(default)", mcp_endpoint: BASE + "/mcp"},
   };
 }
 
@@ -132,7 +131,7 @@ test("ended access asks to connect again", async ({page}) => {
   expect(state.errors).toEqual([]);
 });
 
-test("Google's status shows only when something is wrong", async ({page}) => {
+test("a failure shows for a week, once Google answers again", async ({page}) => {
   const now = Date.now() / 1000;
   const state = await openDashboard(page, {lastFailure: {code: "google_unavailable", at: now - 8 * 86400}});
   await expect(page.locator("#google-rows")).toContainText(OWNER);
@@ -141,11 +140,12 @@ test("Google's status shows only when something is wrong", async ({page}) => {
   state.lastFailure = {code: "google_unavailable", at: now - 3600};
   await page.reload();
   await expect(page.locator("#fact-last-error")).toHaveText("Google isn't answering, 1 hour ago");
-  await expect(page.locator("#fact-live-row")).toBeHidden();
 
+  // While Google doesn't answer, the page says so once, above.
   state.google = {...CONNECTED, state: "google_unavailable"};
   await page.reload();
-  await expect(page.locator("#fact-live")).toHaveText("Google isn't answering");
+  await expect(page.locator("#status-title")).toHaveText("Google Health isn't answering right now.");
+  await expect(page.locator("#google-facts")).toBeHidden();
   expect(state.errors).toEqual([]);
 });
 

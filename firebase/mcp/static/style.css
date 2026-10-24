@@ -47,12 +47,11 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); }
-button, input { font: inherit; color: inherit; }
-button { -webkit-tap-highlight-color: transparent; }
+button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent; }
 a { color: var(--blue); }
 .hidden { display: none !important; }
 h1, h2, p { overflow-wrap: anywhere; }
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 40%, transparent); outline-offset: 2px; }
+button:focus-visible, a:focus-visible { outline: 3px solid color-mix(in srgb, var(--blue) 40%, transparent); outline-offset: 2px; }
 
 /* ---------- Navigation: frosted, like apple.com's local nav ---------- */
 .nav {
@@ -76,8 +75,6 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .project #project-id { overflow: hidden; text-overflow: ellipsis; }
 .project-dot { flex: none; width: 8px; height: 8px; border-radius: 2px; background: linear-gradient(135deg, #ffca28, #ff8f00); }
 .update { display: flex; justify-content: center; align-items: baseline; flex-wrap: wrap; gap: 6px 14px; padding: 11px 22px; background: color-mix(in srgb, var(--blue) 10%, var(--bg)); font-size: 14px; }
-.update a { font-size: 14px; }
-.section-links { display: flex; gap: 18px; }
 .resources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; margin: 0; padding: 0; list-style: none; }
 .resources a { display: block; padding: 14px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; }
 .resources a:hover strong { color: var(--blue); }
@@ -105,10 +102,10 @@ main { width: min(1000px, 100% - 44px); margin: 0 auto; padding-bottom: 96px; }
 .hero.compact { padding: 80px 0 48px; }
 .eyebrow { margin: 0 0 14px; color: var(--muted); font-size: 14px; font-weight: 600; }
 h1 { margin: 0; font-size: clamp(40px, 6.4vw, 64px); line-height: 1.06; letter-spacing: -.035em; font-weight: 700; }
-h3 { margin: 32px 0 4px; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 h2 { margin: 0 0 8px; font-size: 24px; line-height: 1.16; letter-spacing: -.02em; font-weight: 650; }
 .lede { max-width: 620px; margin: 18px auto 0; color: var(--muted); font-size: clamp(19px, 2.3vw, 24px); line-height: 1.38; letter-spacing: -.01em; }
-.note { min-height: 20px; margin: 18px 0 0; color: var(--muted); font-size: 14px; }
+.note { margin: 18px 0 0; color: var(--muted); font-size: 14px; }
+.note:empty { display: none; }
 .note[data-tone="success"] { color: var(--green); }
 .note[data-tone="warning"] { color: var(--amber); }
 .note[data-tone="danger"] { color: var(--red); }
@@ -120,7 +117,6 @@ h2 { margin: 0 0 8px; font-size: 24px; line-height: 1.16; letter-spacing: -.02em
 [data-tone="danger"] .dot { background: var(--red); }
 
 .actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-top: 34px; }
-.actions.left { justify-content: flex-start; margin-top: 18px; }
 
 /* ---------- Buttons: Apple-style pills ---------- */
 .pill { border: 0; border-radius: 999px; padding: 12px 24px; background: var(--blue); color: #fff; cursor: pointer; font-size: 17px; font-weight: 500; letter-spacing: -.01em; transition: background-color .2s, transform .2s, opacity .2s; }
@@ -131,47 +127,21 @@ h2 { margin: 0 0 8px; font-size: 24px; line-height: 1.16; letter-spacing: -.02em
 .pill.small { font-size: 14px; padding: 8px 18px; }
 .pill.wide { width: 100%; margin-top: 6px; }
 
-/* ---------- Panels, tiles ---------- */
+/* ---------- Panels ---------- */
 .panel { margin: 0 auto 28px; padding: 40px; border-radius: 28px; background: var(--surface); }
 .panel-note { margin: 0 0 24px; color: var(--muted); font-size: 15px; line-height: 1.5; }
-.panel.connect { max-width: 520px; text-align: center; scroll-margin-top: 80px; }
-.panel.connect form { text-align: left; }
-.panel.split { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; }
+.panel.connect { max-width: 520px; text-align: center; }
+/* A panel whose parts appear and disappear: one gap between whichever are shown. */
+.panel.stack { display: flex; flex-direction: column; gap: 20px; text-align: left; }
+.panel.stack > * { margin: 0; }
+.stack > .actions { justify-content: flex-start; }
+.stack > .link-button { align-self: center; }
 
-label { display: block; margin-bottom: 14px; color: var(--muted); font-size: 13px; font-weight: 500; }
-input { display: block; width: 100%; margin-top: 6px; padding: 14px 16px; border: 1px solid var(--field-line); border-radius: 12px; background: var(--field); font-size: 17px; transition: border-color .2s, box-shadow .2s; }
-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 18%, transparent); }
-.hint { display: block; margin-top: 8px; color: var(--faint); font-size: 13px; }
+.hint { color: var(--faint); font-size: 13px; }
 
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 56px 4px 16px; }
 #overview-hero { padding-bottom: 8px; }
-.connect + .section-head { margin-top: 32px; }
 .section-head h2 { margin: 0; }
-.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-.tile { display: flex; flex-direction: column; padding: 32px; border-radius: 28px; background: var(--surface); }
-.tile p { margin: 0 0 20px; color: var(--muted); font-size: 15px; line-height: 1.5; }
-.tile .tile-kicker { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 18px; color: var(--ink); font-size: 19px; font-weight: 650; letter-spacing: -.01em; }
-.tile .kicker-note { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; }
-.tile .total { margin-bottom: 18px; }
-.figure { display: block; white-space: nowrap; color: var(--ink); font-size: 40px; line-height: 1; font-weight: 650; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
-.figure-label { display: block; margin-top: 8px; color: var(--muted); font-size: 14px; }
-.tile .tile-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: auto 0 0; padding-top: 18px; font-size: 13px; }
-.chip { align-self: flex-start; padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
-.chip.success { color: var(--green); background: color-mix(in srgb, var(--green) 13%, transparent); }
-.chip.warning { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
-
-/* Holdings and activity rows; --weight draws a quiet bar behind a holding. */
-.list { margin: 0 0 20px; padding: 0; list-style: none; }
-.list li { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
-.list li::after { content: ""; position: absolute; left: 0; bottom: -1px; width: var(--weight, 0); height: 2px; border-radius: 2px; background: var(--blue); opacity: .55; }
-.list li[hidden] { display: none; }
-.list li div { min-width: 0; }
-.list strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
-.list span { color: var(--muted); font-size: 13px; }
-.list li.muted { color: var(--muted); font-size: 14px; }
-.list .value { flex: none; color: var(--ink); font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
-.list .value.up { color: var(--green); }
-.list .value.down { color: var(--red); }
 
 /* ---------- AI apps ---------- */
 .copy-field { display: flex; align-items: center; gap: 12px; margin: 0; padding: 8px 8px 8px 18px; border-radius: 18px; background: var(--bg); }
@@ -189,7 +159,7 @@ input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px co
 .inline-link:hover { text-decoration: underline; }
 .inline-link::after { content: "\2009↗"; }
 .rows { margin: 0; padding: 0; list-style: none; }
-.subhead { margin: 40px 0 12px; font-size: 19px; }
+.subhead { margin: 40px 0 12px; font-size: 19px; font-weight: 650; letter-spacing: -.01em; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-top: 1px solid var(--line); }
 .row strong { display: block; font-weight: 600; }
 .row span { color: var(--muted); font-size: 13px; }
@@ -203,7 +173,6 @@ input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px co
 .sheet[open] { animation: rise .3s cubic-bezier(.2, .8, .2, 1); }
 .sheet::backdrop { background: rgba(0, 0, 0, .35); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 @keyframes rise { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: none; } }
-.sheet h3 { margin-top: 24px; }
 .sheet-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--soft); color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1; }
 .steps { margin: 8px 0 0; padding-left: 22px; }
 .steps li { padding: 6px 0 6px 4px; color: var(--ink); font-size: 15px; line-height: 1.5; }
@@ -233,12 +202,7 @@ input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px co
 .consent .hint { margin: 0 0 24px; overflow-wrap: anywhere; }
 .consent .actions { justify-content: stretch; margin-top: 8px; }
 .consent .actions .pill { flex: 1; }
-.consent .note:empty { display: none; }
 .panel-note.warning { color: var(--amber); }
-
-/* ---------- Google Health ---------- */
-#connect-actions { justify-content: flex-start; margin-top: 24px; }
-.panel .rows + .facts { margin-top: 24px; }
 
 /* ---------- Small screens ---------- */
 @media (max-width: 900px) {
@@ -251,13 +215,10 @@ input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px co
   .tabs { gap: 16px; }
   .hero { padding: 64px 0 48px; }
   .hero.compact { padding: 56px 0 36px; }
-  .tiles, .panel.split { grid-template-columns: 1fr; }
   .project { max-width: 150px; }
   .resources { grid-template-columns: 1fr; }
   .sheet { padding: 28px 22px 22px; }
-  .panel.split { gap: 36px; }
-  .panel, .tile { padding: 28px 24px; border-radius: 24px; }
-  .figure { font-size: 34px; }
+  .panel { padding: 28px 24px; border-radius: 24px; }
 }
 @media (max-width: 480px) {
   .nav-inner, main, .footer { width: calc(100% - 32px); }

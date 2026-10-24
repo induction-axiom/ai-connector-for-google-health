@@ -389,7 +389,6 @@ def create_app(config, store, owner_verifier, connection, transport=None):
                                              "auth_database": config.database,
                                              "connection_secret": config.connection_secret,
                                              "project_id": config.project_id,
-                                             "connect_page": config.connect_page,
                                              "mcp_endpoint": config.resource}})
 
     def forget_token(saved):

@@ -50,7 +50,7 @@
         <p class="status-pill"><span class="dot" aria-hidden="true"></span><span id="status-label">Checking</span></p>
         <h1 id="status-title">Checking your connector…</h1>
         <p id="status-summary" class="lede"></p>
-        <div class="actions">
+        <div id="hero-actions" class="actions">
           <button id="primary-action" class="pill" type="button" disabled>Check again</button>
         </div>
         <p id="message" class="note" role="status" aria-live="polite"></p>
@@ -59,17 +59,17 @@
       <div class="section-head" id="google">
         <h2>Google Health</h2>
       </div>
-      <div class="panel">
+      <div class="panel stack">
         <!-- Connected, or why not -->
         <ul id="google-rows" class="rows"><li class="row muted">Loading…</li></ul>
+        <!-- A recent failure, while Google answers again -->
         <dl id="google-facts" class="facts hidden">
-          <div id="fact-live-row"><dt>Google Health right now</dt><dd id="fact-live">—</dd></div>
-          <div id="fact-last-error-row"><dt>Last problem</dt><dd id="fact-last-error">—</dd></div>
+          <div><dt>Last problem</dt><dd id="fact-last-error">—</dd></div>
         </dl>
+        <p id="connect-note" class="panel-note hidden">Before you connect, sign in once to the Google Health app on your phone, with the Google account that has your health data. It can be a different account from this one.</p>
         <div id="connect-actions" class="actions hidden">
           <button id="google-connect" class="pill" type="button">Connect Google Health</button>
         </div>
-        <p id="connect-note" class="panel-note hidden">Before you connect, sign in once to the Google Health app on your phone, with the Google account that has your health data. It can be a different account from this one.</p>
       </div>
 
       <div class="section-head" id="apps">
