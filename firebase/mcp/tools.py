@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
 
-from google_health import GoogleHealthError
+from google_health import SCOPES, GoogleHealthError
 
 # About 15,000 tokens of JSON: room for the AI to read it and still think.
 MAX_RESULT_CHARS = 60_000
@@ -55,15 +55,17 @@ NEXT_ACTIONS = {
 # The codes that need the owner to act in the dashboard.
 OWNER_ACTIONS = {"not_connected", "google_health_disconnected", "client_invalid", "permission_denied"}
 
-# The data types outside this connector's read scopes (google_health.SCOPES), by the scope
-# area each needs. Google refuses them in several ways (403, 503, or "List is not supported"),
-# so the tools say so without asking.
-OUTSIDE_SCOPES = {
+# The data types that need a scope area of their own, from Google's table of scopes. Without
+# it, Google refuses them in several ways (403, 503, or "List is not supported"), so the tools
+# say so without asking for any left out of google_health.SCOPES.
+SCOPE_AREAS = {
     "electrocardiogram": "ecg", "irregular-rhythm-notification": "irn",
     "food": "nutrition", "food-measurement-unit": "nutrition", "hydration-log": "nutrition",
     "nutrition-log": "nutrition", "moods": "mindfulness", "menstrual-period": "reproductive_health",
     "ovulation-test": "reproductive_health", "symptoms": "logged_symptoms",
 }
+OUTSIDE_SCOPES = {data_type: area for data_type, area in SCOPE_AREAS.items()
+                  if not any(f".{area}." in scope for scope in SCOPES)}
 
 # Everything below is what the schemas don't say, measured against the live API on 2026-10-24
 # or taken from Google's guides. It is the only hand-kept part: when the API changes, an entry

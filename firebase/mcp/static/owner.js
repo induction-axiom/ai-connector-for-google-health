@@ -254,7 +254,9 @@ function confirmButton(label, confirm, act) {
 }
 
 const SCOPE_NAMES = {sleep: "Sleep", health_metrics_and_measurements: "Health metrics (heart rate, HRV, SpO2…)",
-  activity_and_fitness: "Activity and fitness", profile: "Profile", settings: "Settings and devices"};
+  activity_and_fitness: "Activity and fitness", profile: "Profile", settings: "Settings and devices",
+  ecg: "ECG", irn: "Irregular rhythm notifications", mindfulness: "Moods", logged_symptoms: "Symptoms",
+  reproductive_health: "Reproductive health", nutrition: "Food and hydration"};
 const scopeName = scope => SCOPE_NAMES[scope.split(".").at(-2)] || scope;
 
 function renderGoogle(google, state) {

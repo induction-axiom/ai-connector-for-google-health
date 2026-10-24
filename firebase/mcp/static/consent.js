@@ -32,7 +32,8 @@ try {
   }
   el("description").textContent = "Your AI app is asking to connect to your own private AI connector for Google Health.";
   el("scope").textContent = "Read the Google Health data you shared with this connector: sleep, heart rate, " +
-    "HRV, SpO2 and other health metrics, activity, your profile and settings, and your paired devices. It can't " +
+    "HRV, SpO2 and other health metrics, activity, ECG and irregular rhythm notifications, moods, symptoms, " +
+    "reproductive health, food and hydration, your profile and settings, and your paired devices. It can't " +
     "change or delete anything, and never sees your Google sign-in. It stays connected while you use it; after " +
     "3 months unused, it asks you again.";
   el("registered").textContent = view.registered_at

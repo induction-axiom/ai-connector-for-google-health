@@ -88,11 +88,13 @@ the answer on. It keeps no health data. Your project keeps its Google OAuth
 client and Google's refresh token, in Secret Manager, which only the connector
 can read; the AI app sign-ins you approved; and the last error Google gave.
 
-The connector asks Google for five read-only scopes: sleep, health metrics and
-measurements (heart rate, HRV, SpO2, respiratory rate, temperature, weight…),
-activity and fitness, profile, and settings (which also covers paired
-devices). It never asks for write scopes, ECG, irregular-rhythm notifications,
-exercise GPS routes or reproductive health.
+The connector asks Google for eleven read-only scopes: sleep; health metrics
+and measurements (heart rate, HRV, SpO2, respiratory rate, temperature,
+weight…); activity and fitness; ECG; irregular rhythm notifications;
+mindfulness (moods); logged symptoms; reproductive health; nutrition (food and
+hydration); profile; and settings (which also covers paired devices). Google's
+page lets you leave any of them out, and the dashboard names the ones you did.
+It never asks for write scopes, or for exercise GPS routes.
 
 ## The tools
 
@@ -122,11 +124,12 @@ What the connector adds to Google's answers, and nothing else:
   the top of `firebase/mcp/tools.py` (`NOTES`, `REFUSED`, `UNPAGED`), the one
   part kept by hand. A stale entry misleads the AI once, and Google's own error
   then says what the type supports.
-- **Types outside its scopes.** Ten types, such as `electrocardiogram` and
-  `nutrition-log`, need scopes the connector doesn't ask for.
-  `describe_data_type` lists them under `not_readable`, and the tools answer
-  `not_readable` without asking Google, which refuses them in confusing ways
-  (a 403, a 503, or "List is not supported").
+- **Types outside its scopes.** Some types, such as `electrocardiogram` and
+  `nutrition-log`, need a scope of their own. The connector asks for all of
+  them, but a fork that asks for fewer gets the rest listed under
+  `not_readable` by `describe_data_type`, and the tools answer `not_readable`
+  without asking Google, which refuses them in confusing ways (a 403, a 503,
+  or "List is not supported").
 - **Short source-family names.** `data_source_family` takes `google-wearables`
   and the connector sends Google's full `users/me/dataSourceFamilies/…` name.
 - **Empty lists.** Google's JSON leaves out a list with nothing in it, so an

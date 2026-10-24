@@ -16,10 +16,12 @@ API = "https://health.googleapis.com/v4/"
 DISCOVERY = "https://health.googleapis.com/$discovery/rest?version=v4"
 TOKEN = "https://oauth2.googleapis.com/token"
 REVOKE = "https://oauth2.googleapis.com/revoke"
-# Read-only, and only the areas a person's own analysis needs. Every Google Health scope is
-# restricted; each one the owner grants is listed on Google's consent screen.
+# Read-only, every area but exercise GPS routes (location), which no tool reads. Every Google
+# Health scope is restricted; each one the owner grants is listed on Google's consent screen.
+# nutrition.readonly is missing from the discovery document, but Google accepts it.
 SCOPES = tuple(f"https://www.googleapis.com/auth/googlehealth.{area}.readonly" for area in (
-    "sleep", "health_metrics_and_measurements", "activity_and_fitness", "profile", "settings"))
+    "sleep", "health_metrics_and_measurements", "activity_and_fitness", "profile", "settings",
+    "ecg", "irn", "mindfulness", "logged_symptoms", "reproductive_health", "nutrition"))
 # The Google account that granted access, for the dashboard.
 IDENTITY_SCOPES = ("openid", "email")
 CONNECT_SCOPES = SCOPES + IDENTITY_SCOPES

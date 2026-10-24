@@ -1,13 +1,13 @@
 """Tool, Google Health contract and dashboard behaviour against a synthetic Google."""
 import json
 import unittest
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from fakes import BASE, CLIENT, CONNECT_ORIGIN, HEALTH_ACCOUNT, OWNER, MemoryConnection
 from google_health import CONNECT_SCOPES, SCOPES
-from tools import OUTSIDE_SCOPES
 from oauth import key
-from tools import MAX_RESULT_CHARS
+from tools import MAX_RESULT_CHARS, OUTSIDE_SCOPES, SCOPE_AREAS
 import test_oauth
 
 OWNER_HEADERS = {"Origin": BASE, "Authorization": "Bearer synthetic-owner-login"}
@@ -97,20 +97,23 @@ class DescribeTests(Harness):
         total = self.call("describe_data_type", data_type="total-calories")["tools"]
         self.assertEqual((total["list_data_points"], total["reconcile_data_points"]), (None, None))
 
-    def test_types_outside_the_scopes_are_named_and_not_asked_for(self):
+    def test_every_data_type_is_readable_with_the_scopes_asked_for(self):
         result = self.call("describe_data_type")
-        self.assertNotIn("electrocardiogram", result["data_types"])
-        self.assertIn("googlehealth.ecg.readonly", result["not_readable"]["electrocardiogram"])
-        self.assertEqual(set(result["not_readable"]), set(OUTSIDE_SCOPES))
-        # Each is a real data type, and needs a scope this connector really doesn't ask for.
-        catalog_types = set(result["data_types"]) | set(result["not_readable"])
-        self.assertEqual(len(catalog_types), 44)
-        for area in set(OUTSIDE_SCOPES.values()):
-            self.assertFalse(any(f".{area}." in scope for scope in SCOPES), area)
-        for tool, arguments in (("list_data_points", {}), ("reconcile_data_points", {}),
-                                ("describe_data_type", {})):
-            refused = self.call(tool, data_type="electrocardiogram", **arguments)
-            self.assertEqual((refused["error_code"], refused["next_action"]), ("not_readable", "use_another_data_type"))
+        self.assertEqual((len(result["data_types"]), result["not_readable"]), (44, {}))
+        self.assertTrue(set(SCOPE_AREAS) <= set(result["data_types"]))
+        for area in set(SCOPE_AREAS.values()):
+            self.assertTrue(any(f".{area}.readonly" in scope for scope in SCOPES), area)
+
+    def test_a_type_outside_the_scopes_is_not_asked_for(self):
+        # As in a fork that asks Google for fewer scopes.
+        with patch.dict(OUTSIDE_SCOPES, {"electrocardiogram": "ecg"}):
+            result = self.call("describe_data_type")
+            self.assertNotIn("electrocardiogram", result["data_types"])
+            self.assertIn("googlehealth.ecg.readonly", result["not_readable"]["electrocardiogram"])
+            for tool in ("list_data_points", "reconcile_data_points", "describe_data_type"):
+                refused = self.call(tool, data_type="electrocardiogram")
+                self.assertEqual((refused["error_code"], refused["next_action"]),
+                                 ("not_readable", "use_another_data_type"))
         self.assertNotIn("owner_url", refused)
         self.assertEqual(self.google.requests, [])
 
