@@ -237,11 +237,6 @@ input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 4px co
 .panel-note.warning { color: var(--amber); }
 
 /* ---------- Google Health ---------- */
-#client-panel .subhead { margin-top: 0; }
-.panel .rows + #client-panel .subhead, .panel .actions + .panel-note + #client-panel .subhead { margin-top: 32px; }
-#client-form { margin-top: 20px; }
-#client-steps code { white-space: pre-wrap; }
-#client-cancel { margin-top: 16px; }
 #connect-actions { justify-content: flex-start; margin-top: 24px; }
 .panel .rows + .facts { margin-top: 24px; }
 

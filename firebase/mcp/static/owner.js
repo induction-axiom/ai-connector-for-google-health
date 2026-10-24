@@ -5,7 +5,7 @@ import {getAuth, GoogleAuthProvider, signInWithPopup, browserSessionPersistence,
 
 const el = id => document.getElementById(id);
 const VIEWS = ["overview", "developer"];
-let auth, user, status, clientFormOpen = false, busy = false;
+let auth, user, status, busy = false;
 
 // ---------- Small helpers ----------
 
@@ -66,12 +66,12 @@ const CONNECT_COPY = {
   connected_partly: ["Connected, but not to everything: some data wasn't shared. Connect again and allow all of it.", "warning"],
   denied: ["Nothing was connected: access wasn't allowed on Google's page.", "warning"],
   expired: ["That connection attempt expired. Start again from this page.", "warning"],
-  google_rejected: ["Google didn't accept the connection. Check the OAuth client's redirect URI, then try again.", "danger"],
-  client_invalid: ["Google didn't accept the OAuth client. Check its client ID and secret.", "danger"],
+  no_refresh_token: ["Google didn't give lasting access. Remove this connector's access at myaccount.google.com/connections, then connect again.", "warning"],
+  google_rejected: ["Google didn't accept the connection. Try again.", "danger"],
+  client_invalid: ["Google didn't accept this project's OAuth client. Run the setup again.", "danger"],
   google_unavailable: ["Google isn't answering right now. Nothing was saved; try again later.", "warning"],
-  client_saved: ["OAuth client saved. Now connect Google Health.", "success"],
   disconnected: ["Disconnected. Google no longer gives this connector access; your data in Google Health is unchanged.", "success"],
-  no_client: ["Set up the OAuth client first.", "warning"],
+  no_client: ["The setup hasn't finished: run it again.", "warning"],
 };
 
 // ---------- Views and routing ----------
@@ -109,16 +109,20 @@ function appNames(apps) {
 // The page answers one question first: can my AI read my health data?
 function overallState(google, apps) {
   if (google.state === "no_client") return {
-    tone: "neutral", label: "Setup", title: "Set up access to Google Health.", action: "client",
-    summary: "Create an OAuth client in your project, once. Then connect your Google Health data.",
+    tone: "warning", label: "Setup", title: "Finish the setup.", action: "update",
+    summary: "This project's Google client isn't saved yet. Run the setup again: it picks up where it stopped.",
   };
   if (google.state === "not_connected") return {
     tone: "neutral", label: "Setup", title: "Connect Google Health.", action: "connect",
     summary: "Allow this connector to read your Google Health data. Google asks you on its own page.",
   };
-  if (["google_health_disconnected", "client_invalid"].includes(google.state)) return {
+  if (google.state === "google_health_disconnected") return {
     tone: "danger", label: "Action required", title: "Connect Google Health again.", action: "connect",
-    summary: GOOGLE_COPY[google.state] + ". While the app is in Testing, Google ends access after 7 days: publish it to stop that.",
+    summary: GOOGLE_COPY[google.state] + ": it was revoked, unused for 6 months, or the account's password changed.",
+  };
+  if (google.state === "client_invalid") return {
+    tone: "danger", label: "Action required", title: "Run the setup again.", action: "update",
+    summary: GOOGLE_COPY[google.state] + ". The setup saves this project's current client again.",
   };
   if (google.state !== "connected") return {
     tone: "warning", label: "Needs attention", title: "Google Health isn't answering right now.", action: "check",
@@ -146,9 +150,9 @@ function renderStatus() {
   el("status-summary").textContent = state.summary;
   el("primary-action").disabled = busy;
   el("primary-action").dataset.action = state.action;
-  el("primary-action").textContent = state.action === "guide" ? "Connect an AI app" : "Check again";
-  // Before the client is saved, or while not connected, the panel itself is the action.
-  el("primary-action").classList.toggle("hidden", state.action === "client" || state.action === "connect");
+  el("primary-action").textContent = {guide: "Connect an AI app", update: "How to run the setup"}[state.action] || "Check again";
+  // While not connected, the panel's Connect button is the action.
+  el("primary-action").classList.toggle("hidden", state.action === "connect");
   renderGoogle(google, state);
   // Only problems are shown: Google not answering now, or a failure in the last week.
   const connected = google.state === "connected";
@@ -190,11 +194,12 @@ async function loadStatus() {
 // One operation at a time: these controls stay disabled until it ends.
 function setBusy(value) {
   busy = value;
-  for (const id of ["primary-action", "google-connect", "client-submit", "client-change"]) el(id).disabled = value;
+  for (const id of ["primary-action", "google-connect"]) el(id).disabled = value;
 }
 
 el("primary-action").onclick = async () => {
   if (el("primary-action").dataset.action === "guide") return el("apps").scrollIntoView({behavior: "smooth"});
+  if (el("primary-action").dataset.action === "update") return openGuide("setup");
   setBusy(true);
   say("message", "Checking Google Health…");
   try {
@@ -256,8 +261,8 @@ function renderGoogle(google, state) {
   const hasClient = google.state !== "no_client";
   const tokenSaved = !["no_client", "not_connected"].includes(google.state);
   const rows = [];
-  if (!hasClient) rows.push(textRow("Not set up yet", "An OAuth client in your project gives this connector access."));
-  else if (!tokenSaved) rows.push(textRow("Not connected", "OAuth client " + google.client_id));
+  if (!hasClient) rows.push(textRow("Setup not finished", "Run the setup again to save this project's Google client."));
+  else if (!tokenSaved) rows.push(textRow("Not connected", "Your AI apps can't read Google Health yet."));
   else {
     const since = monthDay(google.connected_at);
     rows.push(textRow(google.email || "Google account", [GOOGLE_COPY[google.state] || google.state,
@@ -275,62 +280,9 @@ function renderGoogle(google, state) {
   el("connect-actions").classList.toggle("hidden", !(google.state === "not_connected" || reconnect));
   el("google-connect").textContent = reconnect ? "Connect again" : "Connect Google Health";
   el("connect-note").classList.toggle("hidden", google.state !== "not_connected");
-  el("client-change").classList.toggle("hidden", !hasClient || clientFormOpen);
-  showClientForm(!hasClient || clientFormOpen || google.state === "client_invalid", hasClient);
 }
 
-// Where each setup step happens, in Google Cloud's Google Auth Platform.
-function clientSteps() {
-  const d = status?.diagnostics || {};
-  const cloud = path => `https://console.cloud.google.com/auth/${path}?project=${encodeURIComponent(d.project_id)}`;
-  return [
-    {text: "On Data access, choose Add or remove scopes, and add these, one per line, under Manually add scopes:",
-      copy: (d.scopes || []).join("\n"), href: cloud("scopes"), label: "Open Data access"},
-    {text: "On Audience, choose Publish app. While the app is in Testing, Google ends access every 7 days. It doesn't need Google's verification for your own account: when you connect, Google warns that it hasn't verified the app; choose to continue.",
-      href: cloud("audience"), label: "Open Audience"},
-    {text: "On Clients, choose Create client: type Web application, any name. Under Authorized redirect URIs, add:",
-      copy: d.google_callback || "", href: cloud("clients/create"), label: "Create client"},
-    "Copy the client ID and secret Google shows, and paste them below.",
-  ];
-}
-
-function showClientForm(show, cancellable) {
-  el("client-panel").classList.toggle("hidden", !show);
-  el("client-cancel").classList.toggle("hidden", !cancellable);
-  if (show) el("client-steps").replaceChildren(...guideBody({steps: clientSteps()})[0].children);
-  else el("client-form").reset();
-}
-
-el("client-change").onclick = () => {
-  clientFormOpen = true;
-  renderStatus();
-  el("client-panel").scrollIntoView({behavior: "smooth"});
-};
-
-el("client-cancel").onclick = () => {
-  clientFormOpen = false;
-  renderStatus();
-};
-
-el("client-form").onsubmit = async event => {
-  event.preventDefault();
-  setBusy(true);
-  try {
-    const {result} = await api("/owner/google/client",
-      {client_id: el("client-id").value, client_secret: el("client-secret").value});
-    if (result === "client_saved") clientFormOpen = false;
-    await loadStatus();
-    say("message", ...(CONNECT_COPY[result] || CONNECT_COPY.google_unavailable));
-  } catch (error) {
-    if (error instanceof OwnerSessionExpired) return expireSession();
-    say("message", "The client couldn't be saved. Try again.", "danger");
-  } finally {
-    setBusy(false);
-  }
-  window.scrollTo({top: 0, behavior: "smooth"});
-};
-
-// Google's own page asks the owner, then sends them back here with ?google=<outcome>.
+// The connect page on Firebase Hosting asks Google, then sends the owner back here with ?google=<outcome>.
 el("google-connect").onclick = async () => {
   setBusy(true);
   say("message", "Opening Google…");
@@ -467,14 +419,18 @@ function connectGuide(name) {
 // links within the sentence, as {href, label}.
 function guides() {
   const d = status?.diagnostics || {};
+  const setup = [
+    {text: "Open Cloud Shell with the latest code. Sign in with the Google account that owns this project if asked.",
+      // The stable branch always holds the latest release, never unreleased work on main.
+      href: `https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/${d.repository}&cloudshell_git_branch=stable&show=terminal`,
+      label: "Open Cloud Shell"},
+    {text: "Paste this into the terminal and press Enter:",
+      copy: `firebase/scripts/bootstrap.sh ${d.project_id} ${user?.email}`},
+  ];
   return {
-    update: {title: `Update to ${latestRelease?.version}`, steps: [
-      {text: "Open Cloud Shell with the latest code. Sign in with the Google account that owns this project if asked.",
-        // The stable branch always holds the latest release, never unreleased work on main.
-        href: `https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/${d.repository}&cloudshell_git_branch=stable&show=terminal`,
-        label: "Open Cloud Shell"},
-      {text: "Paste this into the terminal and press Enter:",
-        copy: `firebase/scripts/bootstrap.sh ${d.project_id} ${user?.email}`},
+    setup: {title: "Run the setup again", steps: [...setup,
+      "Type y when asked. It reuses everything already there, and finishes what's missing."]},
+    update: {title: `Update to ${latestRelease?.version}`, steps: [...setup,
       "Type y when asked. It takes a few minutes. Your Google Health connection and AI app connections stay as they are.",
     ], note: "Updating only deploys new code into your own project. You can read every change first under What's new."},
   };
@@ -629,7 +585,6 @@ async function expireSession(text = "Your sign-in expired. Sign in again to cont
 
 function signedOut() {
   user = status = null;
-  clientFormOpen = false;
   el("project").classList.add("hidden");
   showSignedIn(false);
   el("signin").disabled = false;

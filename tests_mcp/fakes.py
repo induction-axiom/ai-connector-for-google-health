@@ -14,8 +14,12 @@ sys.path.insert(0, str(ROOT / "firebase" / "mcp"))
 from google_health import SCOPES
 
 BASE = "https://connector.example"
+# Where the connect page runs, for the synthetic project the tests configure.
+CONNECT_ORIGIN = "https://synthetic-project.firebaseapp.com"
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
 OWNER = {"uid": "synthetic-owner-id", "email": "owner@example.com"}
+# The Google account with the health data, which need not be the owner's.
+HEALTH_ACCOUNT = "health@example.com"
 CLIENT = {"client_id": "123456789012-abcdefghijklmnop.apps.googleusercontent.com",
           "client_secret": "GOCSPX-synthetic-secret-123"}
 # Google's discovery document for the Health API, saved on the revision it names. Every
@@ -75,6 +79,7 @@ class FakeGoogle:
         self.down = False
         self.unlinked = False
         self.granted = list(SCOPES)
+        self.sends_refresh_token = True
         self.nights = [sleep_point(f"2026-10-{d:02d}") for d in range(20, 10, -1)]
         self.heart_points = 0
 
@@ -104,13 +109,15 @@ class FakeGoogle:
         if (form.get("client_id"), form.get("client_secret")) != (CLIENT["client_id"], CLIENT["client_secret"]):
             return httpx.Response(401, json={"error": "invalid_client"})
         if form["grant_type"] == "authorization_code":
-            if form.get("code") != "good-code" or not form.get("code_verifier"):
+            # A popup code is exchanged with the origin of the page that asked for it.
+            if form.get("code") != "synthetic-good-code" or form.get("redirect_uri") != CONNECT_ORIGIN:
                 return httpx.Response(400, json={"error": "invalid_grant", "error_description": "Bad Request"})
             refresh = "refresh-" + str(len(self.token_requests) + 1)
             return httpx.Response(200, json={
-                "access_token": self.issue(refresh), "expires_in": 3599, "refresh_token": refresh,
+                "access_token": self.issue(refresh), "expires_in": 3599,
+                **({"refresh_token": refresh} if self.sends_refresh_token else {}),
                 "scope": " ".join(self.granted + ["openid", "https://www.googleapis.com/auth/userinfo.email"]),
-                "token_type": "Bearer", "id_token": id_token(OWNER["email"])})
+                "token_type": "Bearer", "id_token": id_token(HEALTH_ACCOUNT)})
         if form["grant_type"] == "refresh_token":
             if form["refresh_token"] in self.revoked:
                 return httpx.Response(400, json={"error": "invalid_grant",

@@ -2,9 +2,6 @@
 import json
 import logging
 from pathlib import Path
-import base64
-import hashlib
-import re
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -16,13 +13,13 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, RedirectResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from config import Config
 from connection import SecretConnection
-from google_health import SCOPES, GoogleHealth, GoogleHealthError, authorization_url
-from oauth import ConsentError, Provider, digest, key, random_token
+from google_health import CONNECT_SCOPES, SCOPES, GoogleHealth, GoogleHealthError
+from oauth import ConsentError, Provider, key, random_token
 from store import FirestoreStore
 import tools
 
@@ -53,21 +50,14 @@ def verify_owner(raw, config, max_age=CONSENT_AUTH_AGE):
 
 
 RATE_LIMITS = {"/register": 12, "/authorize": 30, "/consent/start": 30, "/consent/finish": 30,
-               "/token": 60, "/owner/status": 60, "/owner/google/client": 10, "/owner/google/start": 10,
-               "/google/callback": 20, "/owner/google/disconnect": 10, "/owner/preview": 30,
-               "/owner/apps/disconnect": 10}
+               "/token": 60, "/owner/status": 60, "/owner/google/start": 10, "/google/exchange": 20,
+               "/owner/google/disconnect": 10, "/owner/preview": 30, "/owner/apps/disconnect": 10}
 MAX_QUERY_BYTES = 4096
 MAX_BODY_BYTES = 16384
 # The dashboard shows when Google last failed a request, and why.
 LAST_FAILURE = "google_last_failure"
-# Binds Google's answer to the dashboard tab that asked for it. Lax, not Strict: the answer
-# arrives as a navigation from accounts.google.com, which Strict cookies don't follow.
-CONNECT_COOKIE = "__Host-google-connect"
+# The connect page has this long to bring back Google's answer.
 CONNECT_SECONDS = 600
-# The shapes of what Google Cloud shows for an OAuth client.
-CLIENT_ID = r"[0-9]{6,30}-[a-z0-9]{10,64}\.apps\.googleusercontent\.com"
-CLIENT_SECRET = r"[A-Za-z0-9_-]{16,100}"
-
 
 class Boundary:
     """ASGI wrapper in front of every route: reject bad requests early, patch the few
@@ -172,6 +162,9 @@ class Boundary:
         # the SDK's CORS behaviour for MCP clients.
         if path.startswith(("/consent/", "/owner/")) and request.headers.get("origin") != base:
             return {"error": "invalid_origin"}, 403
+        # The one cross-origin call: the connect page on Firebase Hosting, with Google's answer.
+        if path == "/google/exchange" and request.headers.get("origin") != self.config.connect_origin:
+            return {"error": "invalid_origin"}, 403
         if query_bytes > MAX_QUERY_BYTES:
             return {"error": "request_too_large"}, 413
         return None
@@ -225,6 +218,11 @@ class Boundary:
                     pairs[i] = (name, (url + ("&" if "?" in url else "?") + urlencode({"iss": base})).encode())
         pairs += [(b"cache-control", b"no-store"), (b"referrer-policy", b"no-referrer"),
                   (b"x-content-type-options", b"nosniff"), (b"x-frame-options", b"DENY")]
+        if path == "/google/exchange":
+            pairs += [(b"access-control-allow-origin", self.config.connect_origin.encode()),
+                      (b"access-control-allow-methods", b"POST"),
+                      (b"access-control-allow-headers", b"content-type, x-requested-with"),
+                      (b"access-control-max-age", b"600"), (b"vary", b"origin")]
         if path in {"/consent", "/owner"}:
             domain = self.config.firebase_config.get("authDomain", "")
             policy = ("default-src 'none'; script-src 'self' https://www.gstatic.com https://apis.google.com; "
@@ -392,7 +390,7 @@ def create_app(config, store, owner_verifier, connection, transport=None):
                                              "auth_database": config.database,
                                              "connection_secret": config.connection_secret,
                                              "project_id": config.project_id,
-                                             "google_callback": config.google_callback,
+                                             "connect_page": config.connect_page,
                                              "scopes": list(SCOPES),
                                              "mcp_endpoint": config.resource}})
 
@@ -403,78 +401,60 @@ def create_app(config, store, owner_verifier, connection, transport=None):
         connection.save({"client_id": saved["client_id"], "client_secret": saved["client_secret"]})
 
     @owner_endpoint
-    async def owner_google_client(body):
-        """Save the OAuth client the owner created; a new client needs a new consent."""
-        client_id, secret = body.get("client_id"), body.get("client_secret")
-        if (not isinstance(client_id, str) or not re.fullmatch(CLIENT_ID, client_id.strip())
-                or not isinstance(secret, str) or not re.fullmatch(CLIENT_SECRET, secret.strip())):
-            return JSONResponse({"result": "client_invalid"})
-        saved = await anyio.to_thread.run_sync(connection.get)
-        client = {"client_id": client_id.strip(), "client_secret": secret.strip()}
-
-        def save():
-            if saved.get("refresh_token"):
-                health.revoke(saved["refresh_token"])
-            connection.save(client)
-        await anyio.to_thread.run_sync(save)
-        return JSONResponse({"result": "client_saved"})
-
-    @owner_endpoint
     async def owner_google_start(body):
-        """Where to send the owner to allow access. Google's answer must come back to this
-        browser, within ten minutes, carrying this state: a one-time record holds its PKCE
-        verifier and a hash of the cookie set here."""
+        """Where to send the owner to allow access: the connect page on Firebase Hosting,
+        with a one-time state that Google's answer must come back with within ten minutes.
+        Access saved before is revoked first: Google sends a refresh token only with a fresh
+        consent, and its popup can't ask for one."""
         saved = await anyio.to_thread.run_sync(connection.get)
         if not saved.get("client_id"):
             return JSONResponse({"result": "no_client"})
-        state, browser, code_verifier = random_token(), random_token(), random_token() + random_token()
-        challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).decode().rstrip("=")
+        if saved.get("refresh_token"):
+            await anyio.to_thread.run_sync(forget_token, saved)
+        state = random_token()
         record = key("google_connect", state)
         await anyio.to_thread.run_sync(store.transact, [record], lambda _: (None, {record: {
-            "verifier": code_verifier, "browser": digest(browser), "client_id": saved["client_id"],
-            "purge_at": time.time() + CONNECT_SECONDS}}))
-        response = JSONResponse({"result": "redirect", "url": authorization_url(
-            saved["client_id"], config.google_callback, state, challenge, config.owner_email)})
-        response.set_cookie(CONNECT_COOKIE, browser, max_age=CONNECT_SECONDS, path="/", secure=True,
-                            httponly=True, samesite="lax")
-        return response
+            "client_id": saved["client_id"], "purge_at": time.time() + CONNECT_SECONDS}}))
+        # In the fragment, so the state never reaches a server log. Where the page sends
+        # Google's answer, and which client asks, are fixed when the setup deploys it.
+        return JSONResponse({"result": "redirect", "url": config.connect_page + "#" + urlencode({
+            "state": state, "scope": " ".join(CONNECT_SCOPES)})})
 
-    def finish_google(state, code, browser):
-        """Exchange Google's code once, for the browser that asked, and save the refresh token."""
+    def finish_google(state, code):
+        """Exchange Google's code once, for a state the dashboard handed out, and save the refresh token."""
         record = key("google_connect", state)
 
         def take(current):
             return current[record], {record: {"purge_at": time.time()}}  # one use only
-        found = store.transact([record], take) if state else None
-        if (not found or "verifier" not in found or found["purge_at"] < time.time()
-                or not browser or digest(browser) != found["browser"]):
+        found = store.transact([record], take)
+        if not found or "client_id" not in found or found["purge_at"] < time.time():
             return "expired"
-        if not code:
-            return "denied"
         saved = connection.get()
         if saved.get("client_id") != found["client_id"]:
             return "expired"  # the client changed while the owner was at Google
         try:
-            granted = health.exchange_code(saved, code, found["verifier"], config.google_callback)
+            granted = health.exchange_code(saved, code, config.connect_origin)
         except GoogleHealthError as error:
             return error.code
-        if saved.get("refresh_token"):
-            health.revoke(saved["refresh_token"])
         connection.save({"client_id": saved["client_id"], "client_secret": saved["client_secret"],
                          **granted, "connected_at": time.time()})
         return "connected" if len(granted["scopes"]) == len(SCOPES) else "connected_partly"
 
-    async def google_callback(request):
-        params = request.query_params
-        state, code = params.get("state", ""), params.get("code")
-        if len(state) > 128 or len(code or "") > 2048:
-            outcome = "expired"
-        else:
-            outcome = await anyio.to_thread.run_sync(finish_google, state, code,
-                                                     request.cookies.get(CONNECT_COOKIE))
-        response = RedirectResponse(owner_url + "?" + urlencode({"google": outcome}), 303)
-        response.delete_cookie(CONNECT_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
-        return response
+    async def google_exchange(request):
+        """Google's answer, from the connect page. The custom header keeps it to scripts
+        that passed the CORS preflight, and the state to the dashboard that asked."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204)
+        try:
+            data = await request.json()
+            state, code = data["state"], data["code"]
+            if (request.headers.get("x-requested-with") != "XmlHttpRequest"
+                    or not isinstance(state, str) or not 32 <= len(state) <= 128
+                    or not isinstance(code, str) or not 10 <= len(code) <= 2048):
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse({"error": "request_invalid"}, 400)
+        return JSONResponse({"outcome": await anyio.to_thread.run_sync(finish_google, state, code)})
 
     @owner_endpoint
     async def owner_google_disconnect(body):
@@ -517,9 +497,8 @@ def create_app(config, store, owner_verifier, connection, transport=None):
         Route("/consent/start", consent_start, methods=["POST"]),
         Route("/consent/finish", consent_finish, methods=["POST"]),
         Route("/owner/status", owner_status, methods=["POST"]),
-        Route("/owner/google/client", owner_google_client, methods=["POST"]),
         Route("/owner/google/start", owner_google_start, methods=["POST"]),
-        Route("/google/callback", google_callback),
+        Route("/google/exchange", google_exchange, methods=["POST", "OPTIONS"]),
         Route("/owner/google/disconnect", owner_google_disconnect, methods=["POST"]),
         Route("/owner/preview", owner_preview, methods=["POST"]),
         Route("/owner/apps/disconnect", owner_disconnect_app, methods=["POST"]),

@@ -1,6 +1,6 @@
 # Set up your private AI connector for Google Health
 
-<walkthrough-tutorial-duration duration="15"></walkthrough-tutorial-duration>
+<walkthrough-tutorial-duration duration="10"></walkthrough-tutorial-duration>
 
 ## What you'll do
 
@@ -27,12 +27,12 @@ what it says and run the same command again.
 
 ## Step 2 of 3: Connect Google Health
 
-Open the **dashboard** link the terminal printed, and bookmark it. Sign in with
-Google. The dashboard walks you through creating an OAuth client in your
-project, once, then connecting your Google Health data.
+First sign in once to the Google Health app on your phone, with the Google
+account that has your health data.
 
-Before you connect, sign in once to the Google Health app on your phone with
-the same Google account.
+Open the **dashboard** link the terminal printed, and bookmark it. Sign in with
+Google, choose **Connect Google Health**, then **Continue with Google**. Google
+warns that it hasn't verified the app: it is your own connector, so continue.
 
 ## Step 3 of 3: Connect your AI app
 

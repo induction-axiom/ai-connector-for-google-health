@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Connect Google Health · AI connector for Google Health</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://accounts.google.com/gsi/client" async></script>
+</head>
+<body class="owner-page">
+  <header class="nav">
+    <div class="nav-inner">
+      <span class="brand">
+        <span class="brand-name">AI connector for Google Health</span>
+      </span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero compact">
+      <p class="eyebrow">Connect Google Health</p>
+      <h1>Choose the account with your health data.</h1>
+      <p class="lede">It can be a different Google account from the one that owns this connector.</p>
+    </section>
+
+    <div class="panel connect consent">
+      <p class="panel-note">Google opens a window to ask which data to share: allow all of it. Google warns that it hasn't verified this app: it is your own connector, so choose to continue.</p>
+      <button id="continue" class="pill wide" type="button" disabled>Continue with Google</button>
+      <p id="status" class="note" role="status">Loading…</p>
+      <a id="back" class="link-button hidden">Back to your dashboard</a>
+    </div>
+  </main>
+
+  <footer class="footer">Unofficial and self-hosted. Not affiliated with Google.</footer>
+  <script type="module" src="/google-connect.js"></script>
+</body>
+</html>

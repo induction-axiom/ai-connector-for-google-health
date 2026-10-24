@@ -23,9 +23,14 @@ class Config:
         return self.base_url + "/mcp"
 
     @property
-    def google_callback(self):
-        """Where Google sends the owner back after they allow access to their health data."""
-        return self.base_url + "/google/callback"
+    def connect_origin(self):
+        """The Firebase Hosting site that asks Google for health data access. Firebase's own
+        Google client already allows it as a JavaScript origin, so connecting needs no setup."""
+        return f"https://{self.project_id}.firebaseapp.com"
+
+    @property
+    def connect_page(self):
+        return self.connect_origin + "/google-connect.html"
 
     @classmethod
     def from_env(cls):

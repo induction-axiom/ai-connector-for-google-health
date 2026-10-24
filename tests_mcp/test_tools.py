@@ -1,12 +1,11 @@
 """Tool, Google Health contract and dashboard behaviour against a synthetic Google."""
-import base64
-import hashlib
 import json
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
-from fakes import BASE, CLIENT, OWNER, MemoryConnection
-from google_health import SCOPES
+from fakes import BASE, CLIENT, CONNECT_ORIGIN, HEALTH_ACCOUNT, OWNER, MemoryConnection
+from google_health import CONNECT_SCOPES, SCOPES
+from oauth import key
 from tools import MAX_RESULT_CHARS
 import test_oauth
 
@@ -197,86 +196,96 @@ class ConnectionTests(Harness):
 
 
 class DashboardTests(Harness):
-    def connect(self, cookie=True, code="good-code"):
-        """Start connecting in the dashboard, then come back from Google like a browser would."""
+    def start(self):
+        """Choose Connect in the dashboard: the link to the connect page, and its fragment."""
         started = self.owner("/owner/google/start").json()
         self.assertEqual(started["result"], "redirect")
-        query = parse_qs(urlsplit(started["url"]).query)
-        if not cookie:
-            self.client.cookies.clear()
-        params = {"state": query["state"][0], **({"code": code} if code else {"error": "access_denied"})}
-        response = self.client.get("/google/callback", params=params)
-        self.assertEqual(response.status_code, 303)
-        return query, parse_qs(urlsplit(response.headers["location"]).query)["google"][0]
+        link = urlsplit(started["url"])
+        return link, {k: v[0] for k, v in parse_qs(link.fragment).items()}
+
+    def answer(self, state, code="synthetic-good-code", origin=CONNECT_ORIGIN, header="XmlHttpRequest"):
+        """What the connect page sends once Google's popup hands it a code."""
+        headers = {"Origin": origin, **({"X-Requested-With": header} if header else {})}
+        return self.client.post("/google/exchange", headers=headers, json={"state": state, "code": code})
+
+    def connect(self):
+        return self.answer(self.start()[1]["state"]).json()["outcome"]
 
     def test_owner_login_required(self):
-        for path in ("/owner/status", "/owner/google/client", "/owner/google/start",
-                     "/owner/google/disconnect", "/owner/preview"):
+        for path in ("/owner/status", "/owner/google/start", "/owner/google/disconnect", "/owner/preview"):
             r = self.owner(path, headers={"Origin": BASE, "Authorization": "Bearer stranger-login"})
             self.assertEqual(r.status_code, 403, path)
 
     def test_status_follows_the_connection(self):
         self.connection.saved = {}
         self.assertEqual(self.owner("/owner/status").json()["google"], {"state": "no_client"})
+        self.assertEqual(self.owner("/owner/google/start").json(), {"result": "no_client"})
         self.connection.saved = dict(CLIENT)
         self.assertEqual(self.owner("/owner/status").json()["google"]["state"], "not_connected")
         self.connection.saved = MemoryConnection().saved
         status = self.owner("/owner/status").json()
         self.assertEqual((status["google"]["state"], status["google"]["email"], status["google"]["missing_scopes"]),
                          ("connected", OWNER["email"], []))
-        self.assertEqual(status["diagnostics"]["google_callback"], BASE + "/google/callback")
+        self.assertEqual(status["diagnostics"]["connect_page"], CONNECT_ORIGIN + "/google-connect.html")
         self.assertNotIn("refresh-1", json.dumps(status))
         self.assertNotIn(CLIENT["client_secret"], json.dumps(status))
         self.google.unlinked = True
         self.assertEqual(self.owner("/owner/status").json()["google"]["state"], "permission_denied")
 
-    def test_client_is_checked_and_a_new_one_drops_the_old_token(self):
-        for body in ({"client_id": "abc", "client_secret": CLIENT["client_secret"]},
-                     {"client_id": CLIENT["client_id"], "client_secret": "x"}, {}):
-            self.assertEqual(self.owner("/owner/google/client", body).json()["result"], "client_invalid")
-        self.assertEqual(self.connection.saved["refresh_token"], "refresh-1")
-        r = self.owner("/owner/google/client", {"client_id": " " + CLIENT["client_id"] + " ",
-                                                "client_secret": CLIENT["client_secret"]})
-        self.assertEqual(r.json()["result"], "client_saved")
-        self.assertEqual(self.connection.saved, CLIENT)
+    def test_start_links_to_the_connect_page_and_drops_old_access(self):
+        link, fragment = self.start()
+        self.assertEqual(f"{link.scheme}://{link.netloc}{link.path}", CONNECT_ORIGIN + "/google-connect.html")
+        self.assertEqual((link.query, set(fragment)), ("", {"state", "scope"}))
+        self.assertEqual(fragment["scope"].split(), list(CONNECT_SCOPES))
+        # Google's popup can't ask for consent again, and only consent brings a refresh token.
         self.assertIn("refresh-1", self.google.revoked)
+        self.assertEqual(self.connection.saved, CLIENT)
 
-    def test_connect_saves_the_refresh_token_with_pkce(self):
+    def test_connect_saves_access_for_any_google_account(self):
         self.connection.saved = dict(CLIENT)
-        query, outcome = self.connect()
-        self.assertEqual(outcome, "connected")
-        self.assertEqual((query["redirect_uri"], query["access_type"], query["prompt"], query["login_hint"]),
-                         ([BASE + "/google/callback"], ["offline"], ["consent"], [OWNER["email"]]))
-        self.assertEqual(set(query["scope"][0].split()), set(SCOPES) | {"openid", "email"})
+        self.assertEqual(self.connect(), "connected")
         exchange = next(r for r in self.google.token_requests if r["grant_type"] == "authorization_code")
-        challenge = base64.urlsafe_b64encode(hashlib.sha256(exchange["code_verifier"].encode()).digest())
-        self.assertEqual(query["code_challenge"], [challenge.decode().rstrip("=")])
+        self.assertEqual((exchange["redirect_uri"], exchange["client_secret"]), (CONNECT_ORIGIN, CLIENT["client_secret"]))
         saved = self.connection.saved
         self.assertEqual((saved["client_id"], saved["email"], saved["scopes"]),
-                         (CLIENT["client_id"], OWNER["email"], sorted(SCOPES)))
+                         (CLIENT["client_id"], HEALTH_ACCOUNT, sorted(SCOPES)))
         self.assertTrue(saved["refresh_token"].startswith("refresh-"))
         self.assertTrue(self.call("get_resource", name="users/me/identity")["ok"])
 
-    def test_reconnecting_revokes_the_previous_token(self):
-        self.assertEqual(self.connect()[1], "connected")
-        self.assertIn("refresh-1", self.google.revoked)
+    def test_exchange_takes_only_the_connect_pages_script(self):
+        state = self.start()[1]["state"]
+        preflight = self.client.options("/google/exchange", headers={
+            "Origin": CONNECT_ORIGIN, "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type, x-requested-with"})
+        self.assertEqual(preflight.status_code, 204)
+        self.assertEqual(preflight.headers["access-control-allow-origin"], CONNECT_ORIGIN)
+        self.assertEqual(self.answer(state, origin="https://evil.example").status_code, 403)
+        self.assertEqual(self.answer(state, origin=BASE).status_code, 403)
+        self.assertEqual(self.answer(state, header=None).status_code, 400)
+        self.assertEqual(self.answer(state, code="x").status_code, 400)
+        answer = self.answer(state)
+        self.assertEqual(answer.headers["access-control-allow-origin"], CONNECT_ORIGIN)
+        self.assertEqual(answer.json(), {"outcome": "connected"})
 
-    def test_answer_needs_this_browser_and_a_fresh_state(self):
-        self.connection.saved = dict(CLIENT)
-        self.assertEqual(self.connect(cookie=False)[1], "expired")
-        query, _ = self.connect()
-        replay = self.client.get("/google/callback", params={"state": query["state"][0], "code": "good-code"})
-        self.assertEqual(parse_qs(urlsplit(replay.headers["location"]).query)["google"], ["expired"])
-        forged = self.client.get("/google/callback", params={"state": "x" * 43, "code": "good-code"})
-        self.assertEqual(parse_qs(urlsplit(forged.headers["location"]).query)["google"], ["expired"])
+    def test_state_is_used_once_and_expires(self):
+        state = self.start()[1]["state"]
+        self.assertEqual(self.answer(state).json()["outcome"], "connected")
+        self.assertEqual(self.answer(state).json()["outcome"], "expired")
+        self.assertEqual(self.answer("x" * 43).json()["outcome"], "expired")
+        late = self.start()[1]["state"]
+        record = key("google_connect", late)
+        self.store.data[record]["purge_at"] = 0
+        self.assertEqual(self.answer(late).json()["outcome"], "expired")
         self.assertEqual(len([r for r in self.google.token_requests if r["grant_type"] == "authorization_code"]), 1)
 
-    def test_denied_and_partly_granted(self):
-        self.connection.saved = dict(CLIENT)
-        self.assertEqual(self.connect(code=None)[1], "denied")
-        self.assertNotIn("refresh_token", self.connection.saved)
+    def test_no_refresh_token_saves_nothing(self):
+        self.google.sends_refresh_token = False
+        self.assertEqual(self.connect(), "no_refresh_token")
+        self.assertEqual(self.connection.saved, CLIENT)
+
+    def test_partly_granted(self):
         self.google.granted = [s for s in SCOPES if "sleep" in s]
-        self.assertEqual(self.connect()[1], "connected_partly")
+        self.assertEqual(self.connect(), "connected_partly")
         missing = self.owner("/owner/status").json()["google"]["missing_scopes"]
         self.assertEqual(len(missing), len(SCOPES) - 1)
 

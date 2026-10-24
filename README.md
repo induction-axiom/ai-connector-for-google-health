@@ -5,7 +5,7 @@ Health data, from a private, read-only connector that runs in your own Firebase
 project. Any AI app that supports MCP connectors can use it.
 
 - **Yours alone.** Each person deploys their own copy into their own Firebase
-  project, with their own OAuth client. Your data goes from Google Health to
+  project. Your data goes from Google Health to
   your project to the AI app you connect, and nowhere else: there is no shared
   server, and the developer never sees it.
 - **Read-only.** The AI gets seven read tools. Nothing can write to or delete
@@ -16,7 +16,7 @@ project. Any AI app that supports MCP connectors can use it.
   each answer small enough to read.
 
 This project is unofficial and not affiliated with Google. It uses the public
-Google Health API (v4) with your own OAuth client.
+Google Health API (v4) with your project's own OAuth client.
 
 ## Why this exists
 
@@ -45,22 +45,22 @@ a few minutes and ends with your dashboard link. Bookmark it.
 ### 3. Connect Google Health
 
 First sign in once to the Google Health app on your phone, with the Google
-account whose data you want to share.
+account whose data you want to share. It can be a different account from the
+one that owns the connector.
 
-Then open the dashboard and sign in with Google. Reading Google Health data
-needs an OAuth client in your own project, which you create once in Google
-Cloud's Google Auth Platform; the dashboard shows each step with a link:
+Then open the dashboard, sign in with Google, and choose **Connect Google
+Health**. A page on your project's `firebaseapp.com` address opens; choose
+**Continue with Google**, pick the account with your health data, and allow
+everything Google asks.
 
-1. **Data access**: add the five read-only scopes it lists.
-2. **Audience**: publish the app. While an app is in Testing, Google ends its
-   access every 7 days. Your own account doesn't need Google's verification:
-   when you connect, Google warns that it hasn't verified the app, and you
-   continue. An unverified app can be used by at most 100 accounts, which is
-   plenty for one.
-3. **Clients**: create a Web application client with the redirect URI the
-   dashboard shows, and paste its ID and secret into the dashboard.
+Google warns that it hasn't verified the app. It is your own connector, in your
+own project, so choose to continue. Removing that warning would take Google's
+review of the app, which is meant for apps used by many people.
 
-Then choose **Connect Google Health**, and allow everything on Google's page.
+There is no OAuth client to create. Firebase already made one for the
+dashboard's Google sign-in, and it allows your `firebaseapp.com` address, so
+the setup reuses it: it copies the client into Secret Manager and publishes
+the connect page there.
 
 ### 4. Connect your AI app
 
@@ -84,9 +84,9 @@ that looks the same.
 ## How your data is handled
 
 Your connector asks Google Health each time your AI app calls a tool and passes
-the answer on. It keeps no health data. Your project keeps your OAuth client
-and Google's refresh token, in Secret Manager, which only the connector can
-read; the AI app sign-ins you approved; and the last error Google gave.
+the answer on. It keeps no health data. Your project keeps its Google OAuth
+client and Google's refresh token, in Secret Manager, which only the connector
+can read; the AI app sign-ins you approved; and the last error Google gave.
 
 The connector asks Google for five read-only scopes: sleep, health metrics and
 measurements (heart rate, HRV, SpO2, respiratory rate, temperature, weight…),
@@ -129,6 +129,7 @@ needs to act.
 ```text
 firebase/
   mcp/        MCP server, Google Health client, tools, dashboard
+  hosting/    The connect page, published on <project>.firebaseapp.com
   scripts/    bootstrap.sh, manage.py (bootstrap, deploy, doctor, urls)
 tests_mcp/  tests_deployment/  tests_ui/
 docs/cloudshell-tutorial.md     The Cloud Shell guide
@@ -169,9 +170,12 @@ flowchart LR
     Run["Cloud Run: google-health-mcp<br/>MCP endpoint + dashboard<br/>runs as google-health-mcp"]:::run
     Store[("Firestore (default)<br/>AI app sign-ins")]:::store
     Secret[("Secret Manager<br/>google-health-connection")]:::secret
+    Page["Firebase Hosting<br/>connect page on firebaseapp.com"]:::page
   end
   AI -- "1. tool call with OAuth token" --> Run
-  Browser -- "Google sign-in, connect Google Health" --> Run
+  Browser -- "Google sign-in" --> Run
+  Browser -- "connect Google Health" --> Page
+  Page -- "Google's code" --> Run
   Run -- "checks tokens" --> Store
   Run -- "2. reads the refresh token" --> Secret
   Run -- "3. reads, never changes" --> GH
@@ -183,14 +187,24 @@ flowchart LR
   classDef run fill:#4285f4,stroke:#2f6ad0,color:#ffffff
   classDef store fill:#ff9800,stroke:#c77700,color:#1d1d1f
   classDef secret fill:#e8453c,stroke:#b8322b,color:#ffffff
+  classDef page fill:#ffca28,stroke:#c99a00,color:#1d1d1f
   style project fill:none,stroke:#8e8e93,stroke-width:1px,stroke-dasharray:5 4,color:#8e8e93
   linkStyle default stroke:#8e8e93,stroke-width:1.5px
 ```
 
 There are two separate sign-ins. Your AI app signs in to your connector, which
 is its own OAuth server and gives the app a token for this connector only. The
-connector signs in to Google Health with the refresh token you granted in the
-dashboard, which never leaves your project.
+connector signs in to Google Health with the refresh token you granted, which
+never leaves your project.
+
+Granting it goes through the connect page because of where Google sends its
+answer. Google only hands an authorization code to an origin its OAuth client
+lists, and Firebase's client lists `<project>.firebaseapp.com`, not the Cloud
+Run address, which no API can add. So the dashboard links to the connect page
+there, with a one-time state. The page opens Google's popup, and sends the
+code and state to the connector, the one cross-origin call the connector
+accepts. The connector exchanges the code with the client secret, and saves
+the refresh token.
 
 A tool call, step by step:
 

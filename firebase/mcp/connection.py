@@ -1,8 +1,9 @@
 """The owner's Google Health connection, kept in Secret Manager.
 
-It is one JSON object: the OAuth client the owner created in this project ("client_id",
-"client_secret"), and once they allow access, the Google refresh token ("refresh_token"),
-the scopes they granted ("scopes"), the Google account ("email") and when ("connected_at").
+It is one JSON object: the OAuth client Firebase created for Google sign-in in this project
+("client_id", "client_secret"), which the setup copies here, and once the owner allows
+access, the Google refresh token ("refresh_token"), the scopes they granted ("scopes"), the
+Google account ("email") and when ("connected_at").
 Only this service's account can read or change the secret. It is read whenever a new
 access token is needed, so a change in the dashboard takes effect within the hour at most,
 and at once when the dashboard disconnects, since that also revokes the token at Google.

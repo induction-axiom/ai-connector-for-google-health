@@ -58,9 +58,6 @@
 
       <div class="section-head" id="google">
         <h2>Google Health</h2>
-        <div class="section-links">
-          <button id="client-change" class="link-button hidden" type="button">Change OAuth client</button>
-        </div>
       </div>
       <div class="panel">
         <!-- Connected, or why not -->
@@ -72,20 +69,7 @@
         <div id="connect-actions" class="actions hidden">
           <button id="google-connect" class="pill" type="button">Connect Google Health</button>
         </div>
-        <p id="connect-note" class="panel-note hidden">Before you connect, sign in once to the Google Health app on your phone with this Google account. Google then asks which data to share: allow all of it.</p>
-
-        <!-- One-time setup: the OAuth client in this project -->
-        <div id="client-panel" class="hidden">
-          <h3 class="subhead">Set up access, once</h3>
-          <p class="panel-note">Google Health data can only be read by an OAuth client you create in your own project. It takes about two minutes, in Google Cloud's Google Auth Platform.</p>
-          <ol id="client-steps" class="steps"></ol>
-          <form id="client-form">
-            <label>Client ID<input id="client-id" autocomplete="off" spellcheck="false" required maxlength="200" placeholder="….apps.googleusercontent.com"></label>
-            <label>Client secret<input id="client-secret" type="password" autocomplete="off" spellcheck="false" required maxlength="200" placeholder="GOCSPX-…"></label>
-            <button id="client-submit" class="pill wide" type="submit">Save client</button>
-          </form>
-          <button id="client-cancel" class="link-button hidden" type="button">Cancel</button>
-        </div>
+        <p id="connect-note" class="panel-note hidden">Before you connect, sign in once to the Google Health app on your phone, with the Google account that has your health data. It can be a different account from this one.</p>
       </div>
 
       <div class="section-head" id="apps">

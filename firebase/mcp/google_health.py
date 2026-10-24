@@ -14,7 +14,6 @@ import httpx
 
 API = "https://health.googleapis.com/v4/"
 DISCOVERY = "https://health.googleapis.com/$discovery/rest?version=v4"
-AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
 REVOKE = "https://oauth2.googleapis.com/revoke"
 # Read-only, and only the areas a person's own analysis needs. Every Google Health scope is
@@ -23,6 +22,7 @@ SCOPES = tuple(f"https://www.googleapis.com/auth/googlehealth.{area}.readonly" f
     "sleep", "health_metrics_and_measurements", "activity_and_fitness", "profile", "settings"))
 # The Google account that granted access, for the dashboard.
 IDENTITY_SCOPES = ("openid", "email")
+CONNECT_SCOPES = SCOPES + IDENTITY_SCOPES
 # A new access token is fetched this long before the current one expires.
 EARLY_RENEWAL = 60
 
@@ -33,16 +33,6 @@ class GoogleHealthError(Exception):
     def __init__(self, code, detail=None):
         super().__init__(code)
         self.code, self.detail = code, detail
-
-
-def authorization_url(client_id, redirect_uri, state, challenge, login_hint):
-    """Google's consent page for the owner. access_type=offline and prompt=consent make
-    Google issue a refresh token every time, even if access was granted before."""
-    params = {"client_id": client_id, "redirect_uri": redirect_uri, "response_type": "code",
-              "scope": " ".join(SCOPES + IDENTITY_SCOPES), "access_type": "offline",
-              "prompt": "consent", "include_granted_scopes": "false", "state": state,
-              "code_challenge": challenge, "code_challenge_method": "S256", "login_hint": login_hint}
-    return str(httpx.URL(AUTHORIZE, params=params))
 
 
 def email_from(id_token):
@@ -88,14 +78,16 @@ class GoogleHealth:
             raise GoogleHealthError(code, answer.get("error_description") or error)
         return answer
 
-    def exchange_code(self, client, code, verifier, redirect_uri):
-        """The refresh token, granted scopes and Google account for a consent code."""
+    def exchange_code(self, client, code, redirect_uri):
+        """The refresh token, granted scopes and Google account for a consent code. A code
+        from Google's popup is exchanged with the origin of the page that asked for it."""
         answer = self._token_request({
-            "grant_type": "authorization_code", "code": code, "code_verifier": verifier,
-            "redirect_uri": redirect_uri, "client_id": client["client_id"],
-            "client_secret": client["client_secret"]})
+            "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+            "client_id": client["client_id"], "client_secret": client["client_secret"]})
         if not answer.get("refresh_token"):
-            raise GoogleHealthError("google_rejected", "Google sent no refresh token.")
+            # Google sends one only when it shows consent, which it skips for an account that
+            # already granted this client access.
+            raise GoogleHealthError("no_refresh_token")
         return {"refresh_token": answer["refresh_token"],
                 "scopes": sorted(set(answer.get("scope", "").split()) & set(SCOPES)),
                 "email": email_from(answer.get("id_token"))}

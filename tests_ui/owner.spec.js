@@ -35,7 +35,7 @@ function status(state) {
     apps: [],
     diagnostics: {connector_version: "test", repository: "example/example", project_id: "your-project",
       connection_secret: "google-health-connection", auth_database: "(default)", mcp_endpoint: BASE + "/mcp",
-      google_callback: BASE + "/google/callback", scopes: SCOPES},
+      connect_page: "https://your-project.firebaseapp.com/google-connect.html", scopes: SCOPES},
   };
 }
 
@@ -49,9 +49,9 @@ async function openDashboard(page, {google = CONNECTED, lastFailure = null, emai
     if (url.hostname === "www.gstatic.com")
       return route.fulfill({contentType: "text/javascript",
         body: url.pathname.endsWith("firebase-auth.js") ? firebaseAuth(email) : FIREBASE_APP});
-    if (url.hostname === "accounts.google.com") {
-      state.google_page = url;
-      return route.fulfill({contentType: "text/html", body: "Google"});
+    if (url.hostname === "your-project.firebaseapp.com") {
+      state.connect_page = url;
+      return route.fulfill({contentType: "text/html", body: "Connect page"});
     }
     if (url.origin !== BASE) return route.fulfill({status: 404, body: ""});
     if (url.pathname === "/owner")
@@ -68,12 +68,8 @@ async function openDashboard(page, {google = CONNECTED, lastFailure = null, emai
     });
     if (url.pathname === "/owner/status") return json(status(state));
     if (url.pathname.startsWith("/owner/google/")) state.sent.push([url.pathname, route.request().postDataJSON()]);
-    if (url.pathname === "/owner/google/client") {
-      state.google = {state: "not_connected", client_id: CLIENT_ID};
-      return json({result: "client_saved"});
-    }
     if (url.pathname === "/owner/google/start")
-      return json({result: "redirect", url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=" + CLIENT_ID});
+      return json({result: "redirect", url: "https://your-project.firebaseapp.com/google-connect.html#state=s"});
     if (url.pathname === "/owner/google/disconnect") {
       state.google = {state: "not_connected", client_id: CLIENT_ID};
       return json({result: "disconnected"});
@@ -84,30 +80,25 @@ async function openDashboard(page, {google = CONNECTED, lastFailure = null, emai
   return state;
 }
 
-test("setup walks through the OAuth client, then connects at Google", async ({page}) => {
-  const state = await openDashboard(page, {google: {state: "no_client"}});
-  await expect(page.locator("#status-title")).toHaveText("Set up access to Google Health.");
-  await expect(page.locator("#primary-action")).toBeHidden();
-  await expect(page.locator("#client-cancel")).toBeHidden();
-  const steps = page.locator("#client-steps");
-  await expect(steps.locator("li")).toHaveCount(4);
-  await expect(steps.locator("code").nth(0)).toHaveText(SCOPES.join("\n"));
-  await expect(steps.locator("code").nth(1)).toHaveText(BASE + "/google/callback");
-  const links = await steps.locator("a").evaluateAll(anchors => anchors.map(a => a.href));
-  expect(links).toEqual(["scopes", "audience", "clients/create"].map(
-    path => `https://console.cloud.google.com/auth/${path}?project=your-project`));
-
-  await page.fill("#client-id", CLIENT_ID);
-  await page.fill("#client-secret", "GOCSPX-synthetic-secret");
-  await page.click("#client-submit");
-  await expect(page.locator("#message")).toHaveText("OAuth client saved. Now connect Google Health.");
+test("connecting goes to the connect page on Firebase Hosting", async ({page}) => {
+  const state = await openDashboard(page, {google: {state: "not_connected", client_id: CLIENT_ID}});
   await expect(page.locator("#status-title")).toHaveText("Connect Google Health.");
-  await expect(page.locator("#client-panel")).toBeHidden();
-  await expect(page.locator("#connect-note")).toBeVisible();
+  await expect(page.locator("#primary-action")).toBeHidden();
+  await expect(page.locator("#connect-note")).toContainText("It can be a different account from this one.");
   await page.click("#google-connect");
-  await expect.poll(() => state.google_page?.hostname).toBe("accounts.google.com");
-  expect(state.sent).toEqual([["/owner/google/client", {client_id: CLIENT_ID, client_secret: "GOCSPX-synthetic-secret"}],
-                              ["/owner/google/start", {}]]);
+  await expect.poll(() => state.connect_page?.pathname).toBe("/google-connect.html");
+  await expect(page).toHaveURL("https://your-project.firebaseapp.com/google-connect.html#state=s");
+  expect(state.sent).toEqual([["/owner/google/start", {}]]);
+  expect(state.errors).toEqual([]);
+});
+
+test("an unfinished setup says to run it again", async ({page}) => {
+  const state = await openDashboard(page, {google: {state: "no_client"}});
+  await expect(page.locator("#status-title")).toHaveText("Finish the setup.");
+  await expect(page.locator("#google-connect")).toBeHidden();
+  await page.click("#primary-action");
+  await expect(page.locator("#guide-title")).toHaveText("Run the setup again");
+  await expect(page.locator("#guide-body code")).toHaveText("firebase/scripts/bootstrap.sh your-project " + OWNER);
   expect(state.errors).toEqual([]);
 });
 
@@ -128,7 +119,7 @@ test("disconnecting takes two clicks and keeps the client", async ({page}) => {
   expect(state.sent).toEqual([]);
   await disconnect.click();
   await expect(page.locator("#status-title")).toHaveText("Connect Google Health.");
-  await expect(page.locator("#google-rows")).toContainText("OAuth client " + CLIENT_ID);
+  await expect(page.locator("#google-rows")).toContainText("Not connected");
   expect(state.sent).toEqual([["/owner/google/disconnect", {}]]);
   expect(state.errors).toEqual([]);
 });
@@ -144,7 +135,7 @@ test("data left out at Google is named, with a way to connect again", async ({pa
 test("ended access asks to connect again", async ({page}) => {
   const state = await openDashboard(page, {google: {...CONNECTED, state: "google_health_disconnected"}});
   await expect(page.locator("#status-title")).toHaveText("Connect Google Health again.");
-  await expect(page.locator("#status-summary")).toContainText("Google ends access after 7 days");
+  await expect(page.locator("#status-summary")).toContainText("it was revoked, unused for 6 months");
   await expect(page.locator("#google-connect")).toBeVisible();
   expect(state.errors).toEqual([]);
 });

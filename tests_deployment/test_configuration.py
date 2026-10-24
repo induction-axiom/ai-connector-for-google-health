@@ -1,4 +1,6 @@
+import base64
 import json
+from urllib.error import HTTPError
 from pathlib import Path
 import sys
 import tempfile
@@ -9,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firebase/scripts"))
 from configuration import make_config, mcp_env
 import manage
-from manage import bootstrap_config, build, provision, _write_bootstrap_firebase_config
+from manage import (bootstrap_config, build, build_connect_page, provision,
+                    _save_google_client, _write_bootstrap_firebase_config)
 
 WEB = {"projectId": "your-project", "apiKey": "public-key",
        "authDomain": "your-project.firebaseapp.com", "appId": "app-id"}
@@ -143,3 +146,75 @@ class DeploymentTests(unittest.TestCase):
             self.assertNotIn("authorizedRedirectUris", providers["googleSignIn"])
             self.assertEqual([item["database"] for item in value["firestore"]], ["(default)"])
             self.assertIn("allow read, write: if false", (destination / "firestore.rules").read_text())
+
+
+class GoogleClientTests(unittest.TestCase):
+    """The setup copies Firebase's Google sign-in client into the connection secret."""
+    FIREBASE_CLIENT = {"clientId": "123-abc.apps.googleusercontent.com", "clientSecret": "synthetic-secret"}
+
+    def setUp(self):
+        self.cfg = make_config("your-project", "owner@example.com", "us-east4", "123456", WEB)
+        self.saved = None
+        self.calls = []
+
+    def google_api(self, cfg, url, body=None, method=None):
+        self.calls.append(url)
+        if "defaultSupportedIdpConfigs" in url:
+            return self.FIREBASE_CLIENT
+        if url.endswith("/versions/latest:access"):
+            if self.saved is None:
+                raise HTTPError(url, 404, "Not Found", {}, None)
+            return {"payload": {"data": base64.b64encode(json.dumps(self.saved).encode()).decode()}}
+        if url.endswith("/versions?filter=state:ENABLED"):
+            return {"versions": [{"name": "projects/123456/secrets/google-health-connection/versions/1"}]}
+        if url.endswith(":addVersion"):
+            self.saved = json.loads(base64.b64decode(body["payload"]["data"]))
+            return {}
+        if url.endswith(":destroy"):
+            return {}
+        raise AssertionError(url)
+
+    def save(self):
+        with patch("manage.google_api", self.google_api):
+            return _save_google_client(self.cfg)
+
+    def test_first_setup_saves_the_client(self):
+        self.assertEqual(self.save(), "123-abc.apps.googleusercontent.com")
+        self.assertEqual(self.saved, {"client_id": "123-abc.apps.googleusercontent.com",
+                                      "client_secret": "synthetic-secret"})
+        self.assertTrue(any(url.endswith(":destroy") for url in self.calls))
+
+    def test_rerun_keeps_access_for_the_same_client(self):
+        self.saved = {"client_id": "123-abc.apps.googleusercontent.com", "client_secret": "synthetic-secret",
+                      "refresh_token": "kept"}
+        self.save()
+        self.assertFalse(any(url.endswith(":addVersion") for url in self.calls))
+        self.saved["client_secret"] = "old-secret"
+        self.save()
+        self.assertEqual((self.saved["refresh_token"], self.saved["client_secret"]), ("kept", "synthetic-secret"))
+
+    def test_another_client_drops_access_made_for_the_old_one(self):
+        self.saved = {"client_id": "old.apps.googleusercontent.com", "client_secret": "x", "refresh_token": "old"}
+        self.save()
+        self.assertNotIn("refresh_token", self.saved)
+
+    def test_connect_page_names_this_connector_and_client(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hosting = build_connect_page(self.cfg, "123-abc.apps.googleusercontent.com", Path(directory))
+            self.assertEqual({f.name for f in hosting.iterdir()},
+                             {"google-connect.html", "google-connect.js", "google-connect.json", "style.css"})
+            self.assertEqual(json.loads((hosting / "google-connect.json").read_text()),
+                             {"connector": "https://google-health-mcp-123456.us-east4.run.app",
+                              "client_id": "123-abc.apps.googleusercontent.com"})
+
+    def test_connect_page_may_talk_only_to_google_and_the_connector(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = json.loads(_write_bootstrap_firebase_config(self.cfg, Path(directory)).read_text())
+            self.assertTrue((Path(directory) / "hosting").is_dir())
+        headers = {h["key"]: h["value"] for h in value["hosting"]["headers"][0]["headers"]}
+        policy = headers["Content-Security-Policy"]
+        self.assertIn("connect-src 'self' https://accounts.google.com/gsi/ "
+                      "https://google-health-mcp-123456.us-east4.run.app;", policy)
+        self.assertIn("default-src 'none'", policy)
+        self.assertEqual(headers["Cross-Origin-Opener-Policy"], "same-origin-allow-popups")
+

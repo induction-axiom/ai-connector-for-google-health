@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Provision, build, and deploy a self-hosted connector; never handles Google Health credentials."""
 import argparse
+import base64
 import json
 import os
 import re
@@ -23,6 +24,7 @@ REQUIRED_APIS = (
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "firebase.googleapis.com",
+    "firebasehosting.googleapis.com",
     "firestore.googleapis.com",
     "health.googleapis.com",
     "identitytoolkit.googleapis.com",
@@ -231,6 +233,74 @@ def _ensure_web_app(cfg):
     return {key: sdk[key] for key in required}
 
 
+def google_api(cfg, url, body=None, method=None):
+    """A Google REST call as the signed-in gcloud account. Bodies and answers may hold
+    secrets, so neither is shown; only the method and address are."""
+    headers = {"Authorization": "Bearer " + run(["gcloud", "auth", "print-access-token"], secret=True),
+               "x-goog-user-project": cfg["project_id"], "Content-Type": "application/json"}
+    method = method or ("POST" if body is not None else "GET")
+    ui.line(method + " " + url.split("?", 1)[0])
+    data = None if body is None else json.dumps(body).encode()
+    with urlopen(Request(url, data=data, headers=headers, method=method), timeout=30) as response:
+        return json.loads(response.read() or b"{}")
+
+
+def _ensure_hosting_site(cfg):
+    """The default Hosting site serves <project>.firebaseapp.com, where the connect page goes."""
+    base = "https://firebasehosting.googleapis.com/v1beta1/projects/" + cfg["project_id"] + "/sites"
+    sites = google_api(cfg, base).get("sites", [])
+    if any(site.get("type") == "DEFAULT_SITE" for site in sites):
+        ui.reused("Hosting site " + cfg["project_id"] + ".firebaseapp.com")
+        return
+    google_api(cfg, base + "?siteId=" + cfg["project_id"], {})
+    ui.created("Hosting site " + cfg["project_id"] + ".firebaseapp.com")
+
+
+def _save_google_client(cfg):
+    """Copy the OAuth client Firebase made for Google sign-in into the connection secret,
+    keeping a saved refresh token only if it is for the same client. Returns the client ID."""
+    idp = google_api(cfg, "https://identitytoolkit.googleapis.com/admin/v2/projects/"
+                     + cfg["project_id"] + "/defaultSupportedIdpConfigs/google.com")
+    if not idp.get("clientId") or not idp.get("clientSecret"):
+        raise RuntimeError("Firebase's Google sign-in has no OAuth client yet; run this again in a minute")
+    client = {"client_id": idp["clientId"], "client_secret": idp["clientSecret"]}
+    secret = ("https://secretmanager.googleapis.com/v1/projects/" + cfg["project_id"]
+              + "/secrets/" + cfg["connection_secret_id"])
+    try:
+        payload = google_api(cfg, secret + "/versions/latest:access")["payload"]["data"]
+        saved = json.loads(base64.b64decode(payload))
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+        saved = {}
+    keep = saved if saved.get("client_id") == client["client_id"] else {}
+    updated = {**keep, **client}
+    if updated == saved:
+        ui.reused("Google client " + client["client_id"])
+        return client["client_id"]
+    old = google_api(cfg, secret + "/versions?filter=state:ENABLED").get("versions", [])
+    google_api(cfg, secret + ":addVersion",
+               {"payload": {"data": base64.b64encode(json.dumps(updated).encode()).decode()}})
+    for version in old:
+        google_api(cfg, "https://secretmanager.googleapis.com/v1/" + version["name"] + ":destroy", {})
+    (ui.reused if saved else ui.created)("Google client " + client["client_id"] + " for Google Health")
+    return client["client_id"]
+
+
+def build_connect_page(cfg, client_id, destination):
+    """The connect page and its fixed settings: where Google's answer goes, and which client asks."""
+    hosting = destination / "hosting"
+    if hosting.exists():
+        shutil.rmtree(hosting)
+    hosting.mkdir(parents=True)
+    for name in ("google-connect.html", "google-connect.js"):
+        shutil.copyfile(ROOT / "firebase/hosting" / name, hosting / name)
+    shutil.copyfile(ROOT / "firebase/mcp/static/style.css", hosting / "style.css")
+    (hosting / "google-connect.json").write_text(json.dumps(
+        {"connector": mcp_env(cfg)["MCP_BASE_URL"], "client_id": client_id}))
+    return hosting
+
+
 def _ensure_authorized_domain(cfg):
     """Allow Google Sign-In popups from the deterministic Cloud Run origin."""
     domain = mcp_env(cfg)["MCP_BASE_URL"].removeprefix("https://")
@@ -265,8 +335,18 @@ def _keep_recent_images(cfg, repository):
               "--location", cfg["region"], "--policy", file.name, "--no-dry-run")
 
 
+# Google's popup, from the guide for its code model; the page talks only to the connector.
+CONNECT_PAGE_POLICY = ("default-src 'none'; script-src 'self' https://accounts.google.com/gsi/client; "
+                       "style-src 'self' https://accounts.google.com/gsi/style; "
+                       "connect-src 'self' https://accounts.google.com/gsi/ {connector}; "
+                       "frame-src https://accounts.google.com/gsi/; base-uri 'none'; form-action 'none'; "
+                       "frame-ancestors 'none'")
+
+
 def _write_bootstrap_firebase_config(cfg, destination):
     shutil.copyfile(ROOT / "firebase/firestore.rules", destination / "firestore.rules")
+    # build_connect_page fills it; the Firebase CLI wants it to exist for every deploy.
+    (destination / "hosting").mkdir(exist_ok=True)
     write_json(destination / "firestore.indexes.json", {"indexes": [], "fieldOverrides": []})
     value = {
         "auth": {"providers": {"googleSignIn": {
@@ -275,6 +355,13 @@ def _write_bootstrap_firebase_config(cfg, destination):
         }}},
         "firestore": [{"database": cfg["auth_database"], "rules": "firestore.rules",
                        "indexes": "firestore.indexes.json"}],
+        "hosting": {"public": "hosting", "headers": [{"source": "**", "headers": [
+            {"key": "Content-Security-Policy",
+             "value": CONNECT_PAGE_POLICY.format(connector=mcp_env(cfg)["MCP_BASE_URL"])},
+            {"key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups"},
+            {"key": "Referrer-Policy", "value": "no-referrer"},
+            {"key": "X-Content-Type-Options", "value": "nosniff"},
+            {"key": "Cache-Control", "value": "no-cache"}]}]},
     }
     path = destination / "firebase.bootstrap.json"
     write_json(path, value)
@@ -288,6 +375,7 @@ SETUP_STEPS = (
     "Create the secret that will hold your Google Health access",
     "Give the service account access to only what it needs",
     "Add Firebase Authentication with Google Sign-In for the dashboard",
+    "Use Firebase's Google client for Google Health, and publish the connect page",
     "Deploy the connector and its dashboard (the slow part)",
     "Check that it rejects anonymous requests",
 )
@@ -339,7 +427,7 @@ def provision(cfg, updating):
             ui.created("secret " + cfg["connection_secret_id"])
 
     with setup_step(5):
-        # The dashboard saves the OAuth client and refresh token; nothing else can read them.
+        # The setup saves the OAuth client and the dashboard the refresh token; nothing else can read them.
         for role in ("secretAccessor", "secretVersionAdder", "secretVersionManager"):
             cloud(cfg, "secrets", "add-iam-policy-binding", cfg["connection_secret_id"],
                   "--member=serviceAccount:" + email(cfg, "mcp"),
@@ -359,9 +447,16 @@ def provision(cfg, updating):
         _ensure_authorized_domain(cfg)
 
     with setup_step(7):
-        deploy(cfg)
+        _ensure_hosting_site(cfg)
+        client_id = _save_google_client(cfg)
+        build_connect_page(cfg, client_id, destination)
+        run([*firebase_cli(), "deploy", "--project", cfg["project_id"], "--config", firebase_config,
+             "--only", "hosting", "--non-interactive"], capture=False)
 
     with setup_step(8):
+        deploy(cfg)
+
+    with setup_step(9):
         checks = doctor(cfg)
     summarize(cfg, checks)
 
@@ -384,9 +479,7 @@ def summarize(cfg, checks):
     ui.say()
     ui.say(ui.bold("Next"))
     ui.say("  1. Open your dashboard (the link above) and bookmark it.")
-    ui.say(f'  2. Sign in with Google as {cfg["owner_email"]}, then set up and connect Google Health.')
-    ui.say("     The dashboard shows each step, and the redirect URI to give your OAuth client:")
-    ui.say("     " + base + "/google/callback")
+    ui.say(f'  2. Sign in with Google as {cfg["owner_email"]}, then choose Connect Google Health.')
     ui.say("  3. Under AI apps, choose your AI app → How to connect.")
     ui.say()
 
@@ -436,6 +529,16 @@ def doctor(cfg):
             raise RuntimeError("Unexpected OAuth scope")
         ui.line(f"PASS  GET {path} → 200")
         passed += 1
+    page = f'https://{cfg["project_id"]}.firebaseapp.com/google-connect.json'
+    try:
+        with urlopen(page, timeout=30) as response:
+            connector = json.load(response).get("connector")
+    except (HTTPError, ValueError):
+        connector = None
+    if connector != base:
+        raise RuntimeError("The connect page on Firebase Hosting doesn't name this connector; run the setup again")
+    ui.line("PASS  GET " + page + " → names this connector")
+    passed += 1
     ui.line("An actual owner tool call still requires OAuth consent.")
     ui.note(f"{passed} of {passed} passed")
     return passed
