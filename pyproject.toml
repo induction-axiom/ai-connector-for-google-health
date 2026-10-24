@@ -1,5 +1,5 @@
 [project]
-name = "ghealth-connector"
+name = "ai-connector-for-google-health"
 version = "0.1.0"
 requires-python = ">=3.13"
 description = "Self-hosted, read-only AI connector for the Google Health API"

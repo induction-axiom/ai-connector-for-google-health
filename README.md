@@ -37,7 +37,7 @@ the Blaze plan. For one person, it stays within the no-cost tier.
 
 Click this button. It opens Google Cloud Shell with a setup guide on the right.
 
-[![Set up in Google Cloud Shell](https://img.shields.io/badge/Set%20up%20in%20Google%20Cloud%20Shell-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/induction-axiom/ghealth-connector&cloudshell_git_branch=stable&cloudshell_tutorial=docs/cloudshell-tutorial.md&show=terminal)
+[![Set up in Google Cloud Shell](https://img.shields.io/badge/Set%20up%20in%20Google%20Cloud%20Shell-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/induction-axiom/ai-connector-for-google-health&cloudshell_git_branch=stable&cloudshell_tutorial=docs/cloudshell-tutorial.md&show=terminal)
 
 When Cloud Shell asks, tick **Trust repo**. Then follow the guide. It takes
 a few minutes and ends with your dashboard link. Bookmark it.

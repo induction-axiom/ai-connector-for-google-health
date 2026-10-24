@@ -34,7 +34,7 @@ COOKIE = "__Host-mcp-consent"
 BUILD_FILE = Path(__file__).parent / "version.json"
 BUILD = json.loads(BUILD_FILE.read_text()) if BUILD_FILE.exists() else {"version": "dev"}
 # Where releases and source live; the dashboard checks it for updates. A fork changes this.
-REPOSITORY = "induction-axiom/ghealth-connector"
+REPOSITORY = "induction-axiom/ai-connector-for-google-health"
 VERSION = BUILD["version"]
 
 
@@ -278,7 +278,7 @@ def create_app(config, store, owner_verifier, connection, transport=None):
     # ---------- Public pages and OAuth consent ----------
 
     async def health_page(request):
-        return JSONResponse({"service": "ghealth-connector", "connector_version": VERSION})
+        return JSONResponse({"service": "ai-connector-for-google-health", "connector_version": VERSION})
 
     async def metadata(request):
         return JSONResponse({
