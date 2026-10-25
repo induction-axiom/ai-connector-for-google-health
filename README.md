@@ -4,6 +4,14 @@ Ask your AI app about your sleep, heart rate, HRV and the rest of your Google
 Health data, from a private, read-only connector that runs in your own Firebase
 project. Any AI app that supports MCP connectors can use it.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/example-sleep-dark.png">
+  <img alt="Simulated conversation: asked about two weeks of sleep and HRV, the AI reads both with reconcile_data_points and compares the weeks: 7 h 06 min asleep and 44 ms HRV, then 6 h 30 min and 38 ms" src="docs/images/example-sleep-light.png" width="680">
+</picture>
+
+All images use made-up data. The conversation is an illustration; the
+dashboard screenshots show the actual interface.
+
 - **Yours alone.** Each person deploys their own copy into their own Firebase
   project. Your data goes from Google Health to
   your project to the AI app you connect, and nowhere else: there is no shared
@@ -14,6 +22,14 @@ project. Any AI app that supports MCP connectors can use it.
   [Google Health API](https://developers.google.com/health), and answers with
   Google's JSON as it is. The AI does the analysis; the connector only keeps
   each answer small enough to read.
+- **One page to manage it.** The dashboard shows whether Google Health is
+  answering and which AI apps are connected, and is where you connect Google
+  Health.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img alt="Dashboard overview: Claude and ChatGPT can read your Google Health data, and the Google Health account is connected and answering" src="docs/images/overview-light.png" width="680">
+</picture>
 
 This project is unofficial and not affiliated with Google. It uses the public
 Google Health API (v4) with your project's own OAuth client.
@@ -68,6 +84,11 @@ In the dashboard, under **AI apps** → **How to connect**, copy the address and
 choose your app to see what to do. **Another app** covers any other app that
 supports MCP.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/connect-claude-dark.png">
+  <img alt="The dashboard's AI apps panel: Claude and ChatGPT connected, the MCP address to copy, a choice of app, and the steps for Claude with a link to its guide" src="docs/images/connect-claude-light.png" width="680">
+</picture>
+
 When the AI app sends you to approve the connection, only allow it if you
 just chose Connect in that app yourself. Someone else can send you a link
 that looks the same.
@@ -109,6 +130,14 @@ share it later, disconnect and connect again.
 | `daily_roll_up_data_points` | `POST users/me/dataTypes/{type}/dataPoints:dailyRollUp` |
 | `get_resource` | `GET` of `users/me/identity`, `profile`, `settings`, a paired device, or one data point |
 | `list_paired_devices` | `GET users/me/pairedDevices` |
+
+The dashboard's **Developer** tab shows exactly what a tool returns. Here,
+the last night's sleep: Google's JSON as it is, with the connector's `ok`.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tool-output-dark.png">
+  <img alt="The Developer tab's tool output for the last sleep: one reconciled sleep data point with its interval, type and summary, in Google's JSON" src="docs/images/tool-output-light.png" width="680">
+</picture>
 
 What the connector adds to Google's answers, and nothing else:
 
@@ -181,6 +210,13 @@ against a newer API, save the current one over it:
 
 ```sh
 curl -o tests_mcp/discovery_v4.json 'https://health.googleapis.com/$discovery/rest?version=v4'
+```
+
+Regenerate the README images with synthetic data, without connecting to a
+deployment or Google:
+
+```sh
+node tests_ui/screenshots.mjs
 ```
 
 ### Architecture
