@@ -1,6 +1,6 @@
 // README artwork: node tests_ui/screenshots.mjs
 // Uses the real dashboard with synthetic data and intercepted requests only.
-// The conversation illustration is an example, not a screenshot of any AI app.
+// The example conversation is an illustration, not a screenshot of any AI app.
 import {readFileSync, mkdirSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {chromium, expect} from "@playwright/test";
@@ -93,51 +93,45 @@ async function dashboard(page) {
   return errors;
 }
 
-const conversationCSS = `
+// The pitch: one line on the left, one question and one answer on the right, read in a glance.
+const promoCSS = `
   :root { color-scheme: light; --bg:#f5f5f7; --surface:#fff; --ink:#1d1d1f;
-    --muted:#6e6e73; --line:#e8e8ed; --blue:#0071e3; --green:#1d8a3f; --amber:#b26a00; }
+    --muted:#6e6e73; --line:#e8e8ed; --blue:#0071e3; }
   @media(prefers-color-scheme:dark) { :root { color-scheme:dark; --bg:#000;
-    --surface:#1c1c1e; --ink:#f5f5f7; --muted:#a1a1a6; --line:#333336;
-    --blue:#0071e3; --green:#30d158; --amber:#ffb340; } }
+    --surface:#1c1c1e; --ink:#f5f5f7; --muted:#a1a1a6; --line:#333336; --blue:#0a84ff; } }
   * {box-sizing:border-box} body {margin:0; background:var(--bg); color:var(--ink);
-    font:17px/1.48 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
-    -webkit-font-smoothing:antialiased} main {padding:38px; width:${WIDTH}px}
-  header {display:flex; align-items:center; justify-content:space-between; gap:18px; margin:0 6px 22px}
-  header strong {font-size:18px; letter-spacing:-.025em} .sample {font-size:13px;
-    background:var(--line); color:var(--muted); padding:4px 12px; border-radius:24px; white-space:nowrap}
-  .user {max-width:620px; margin:0 0 18px auto; padding:16px 20px; border-radius:24px 24px 6px 24px;
-    background:var(--blue); color:#fff} .answer {padding:24px 28px; margin-bottom:20px;
-    background:var(--surface); border-radius:24px} p {margin:0 0 14px} p:last-child {margin:0}
-  .tools {display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px}
-  .tool {font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
-    color:var(--muted); background:var(--line); padding:4px 8px; border-radius:8px}
-  h1 {font-size:28px; letter-spacing:-.035em; line-height:1.16; margin:0 0 16px}
-  .muted {color:var(--muted)} .small {font-size:14px} .lower {color:var(--amber)}
-  table {width:100%; border-collapse:collapse; margin:6px 0 20px; font-variant-numeric:tabular-nums}
-  th {text-align:right; font-size:14px; font-weight:600; color:var(--muted); padding:0 0 8px}
-  th:first-child, td:first-child {text-align:left} td {padding:9px 0; border-top:1px solid var(--line); text-align:right}
-  td:first-child {color:var(--muted)} td + td {font-weight:600; width:180px}
-  footer {margin:4px 6px 0; color:var(--muted); font-size:13px; line-height:1.5}
+    font:17px/1.4 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif; -webkit-font-smoothing:antialiased}
+  main {position:relative; width:${WIDTH}px; padding:64px 64px 72px; display:grid;
+    grid-template-columns:1fr 420px; gap:56px; align-items:center}
+  .product {margin:0 0 14px; color:var(--muted); font-size:16px; font-weight:600}
+  h1 {margin:0; font-size:54px; line-height:1.04; letter-spacing:-.04em; font-weight:700}
+  .user {width:fit-content; max-width:340px; margin:0 0 14px auto; padding:13px 18px;
+    border-radius:22px 22px 6px 22px; background:var(--blue); color:#fff; font-size:18px}
+  .answer {padding:26px 28px; border-radius:24px; background:var(--surface)}
+  .figure {font-size:46px; line-height:1; font-weight:700; letter-spacing:-.035em; font-variant-numeric:tabular-nums}
+  .caption {margin-top:8px; color:var(--muted); font-size:17px}
+  .bars {display:flex; gap:10px; align-items:flex-end; height:96px; margin-top:24px}
+  .bars div {flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; height:100%; justify-content:flex-end}
+  .bars i {display:block; width:26px; border-radius:6px; background:var(--blue)}
+  .bars span {color:var(--muted); font-size:12px}
+  .sample {position:absolute; right:64px; bottom:28px; margin:0; color:var(--muted); font-size:13px}
 `;
+// Hours asleep each night of the week: 6 h 30 min on average.
+const nights = [["S", 6.9], ["M", 6.2], ["T", 5.6], ["W", 6.8], ["T", 5.4], ["F", 7.1], ["S", 7.5]];
 const examples = {
   "example-sleep": `
-    <header><strong>Ask about your sleep, night by night.</strong><span class="sample">Simulated example</span></header>
-    <div class="user">How has my sleep been over the last two weeks? Does my HRV follow it?</div>
-    <div class="answer">
-      <div class="tools"><span class="tool">reconcile_data_points · sleep · 14 nights</span>
-        <span class="tool">reconcile_data_points · daily-heart-rate-variability · 14 days</span></div>
-      <h1>You slept 6 h 48 min a night, and less in the second week.</h1>
-      <table><thead><tr><th></th><th>Oct 11–17</th><th>Oct 18–24</th></tr></thead><tbody>
-        <tr><td>Asleep, average</td><td>7 h 06 min</td><td class="lower">6 h 30 min</td></tr>
-        <tr><td>Deep sleep</td><td>1 h 12 min</td><td class="lower">58 min</td></tr>
-        <tr><td>REM sleep</td><td>1 h 34 min</td><td>1 h 27 min</td></tr>
-        <tr><td>HRV, average</td><td>44 ms</td><td class="lower">38 ms</td></tr>
-      </tbody></table>
-      <p>Your four shortest nights, all under 6 hours, were each followed by a day with HRV under 36 ms.
-        Three of them started after 00:40.</p>
-      <p class="muted small">From Google Health's own records, one entry per night. Not medical advice.</p>
-    </div>
-    <footer>Illustration with made-up data. The AI app does the analysis; the connector passes on Google Health's answers.</footer>`,
+    <section><p class="product">AI connector for Google Health</p>
+      <h1>Ask your AI<br>about your sleep.</h1></section>
+    <section>
+      <div class="user">How did I sleep this week?</div>
+      <div class="answer">
+        <div class="figure">6 h 30 min</div>
+        <div class="caption">a night, 36 min less than last week</div>
+        <div class="bars">${nights.map(([day, hours]) =>
+          `<div><i style="height:${Math.round(hours / 8 * 78)}px"></i><span>${day}</span></div>`).join("")}</div>
+      </div>
+    </section>
+    <p class="sample">Simulated example · made-up data</p>`,
 };
 
 mkdirSync(OUTPUT, {recursive: true});
@@ -182,7 +176,7 @@ try {
       // A short viewport, so the full-page capture ends where the content does.
       await page.setViewportSize({width: WIDTH, height: 400});
       await page.setContent(`<!doctype html><html lang="en"><meta charset="utf-8">
-        <title>Google Health connector — simulated example</title><style>${conversationCSS}</style><main>${body}</main></html>`);
+        <title>Google Health connector — simulated example</title><style>${promoCSS}</style><main>${body}</main></html>`);
       await page.evaluate(() => document.fonts.ready);
       await save(name, {fullPage: true});
     }
