@@ -298,7 +298,10 @@ class DashboardTests(Harness):
     def test_owner_login_required(self):
         for path in ("/owner/status", "/owner/google/start", "/owner/google/disconnect", "/owner/preview"):
             r = self.owner(path, headers={"Origin": BASE, "Authorization": "Bearer stranger-login"})
-            self.assertEqual(r.status_code, 403, path)
+            self.assertEqual((r.status_code, r.json()), (403, {"error": "not_owner"}), path)
+            # The owner's own sign-in, grown too old, is asked to sign in again: not called a stranger.
+            r = self.owner(path, headers={"Origin": BASE, "Authorization": "Bearer synthetic-stale-login"})
+            self.assertEqual((r.status_code, r.json()), (403, {"error": "owner_login_required"}), path)
 
     def test_status_follows_the_connection(self):
         self.connection.saved = {}

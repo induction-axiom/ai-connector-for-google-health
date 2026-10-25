@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firebase" / "mcp"))
 
 import google_health
+from oauth import ConsentError
 from google_health import SCOPES
 
 # Tests don't wait between retries.
@@ -35,6 +36,8 @@ SYSTEM_PARAMETERS = set(DISCOVERY["parameters"])
 def owner_identity(token, max_age=None):
     if token == "synthetic-owner-login":
         return OWNER
+    if token == "synthetic-stale-login":  # the owner, signed in too long ago
+        raise ConsentError("owner_google_login_required")
     return {"uid": "stranger", "email": "stranger@example.com"}
 
 
