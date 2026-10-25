@@ -9,9 +9,6 @@ project. Any AI app that supports MCP connectors can use it.
   <img alt="Simulated example: asked how you slept this week, the AI answers 6 h 30 min a night, 36 minutes less than last week, with a bar for each night" src="docs/images/example-sleep-light.png" width="680">
 </picture>
 
-All images use made-up data. The conversation is an illustration; the
-dashboard screenshots show the actual interface.
-
 - **Yours alone.** Each person deploys their own copy into their own Firebase
   project. Your data goes from Google Health to
   your project to the AI app you connect, and nowhere else: there is no shared
