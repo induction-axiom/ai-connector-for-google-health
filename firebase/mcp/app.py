@@ -6,6 +6,8 @@ from threading import Lock
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+from ai_connector_core.oauth import ConsentError, Provider, key, random_token
+from ai_connector_core.store import FirestoreStore
 import anyio
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -18,8 +20,6 @@ from starlette.routing import Route
 from config import Config
 from connection import SecretConnection
 from google_health import CONNECT_SCOPES, GoogleHealth, GoogleHealthError
-from oauth import ConsentError, Provider, key, random_token
-from store import FirestoreStore
 import tools
 
 STATIC = Path(__file__).parent / "static"

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "firebase" / "mcp"))
 
 import google_health
-from oauth import ConsentError
+from ai_connector_core.oauth import ConsentError
 from google_health import SCOPES
 
 # Tests don't wait between retries.

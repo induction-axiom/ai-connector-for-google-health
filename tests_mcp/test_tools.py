@@ -4,9 +4,9 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+from ai_connector_core.oauth import key
 from fakes import BASE, CLIENT, CONNECT_ORIGIN, HEALTH_ACCOUNT, OWNER, MemoryConnection
 from google_health import CONNECT_SCOPES, SCOPES
-from oauth import key
 from tools import MAX_RESULT_CHARS, NOT_READABLE, SCOPE_AREAS, WRITE_ONLY, not_readable
 import test_oauth
 
@@ -15,6 +15,8 @@ OWNER_HEADERS = {"Origin": BASE, "Authorization": "Bearer synthetic-owner-login"
 
 class Harness(unittest.TestCase):
     """Reuses the OAuth test setup: a real consent, then tool calls over /mcp."""
+    make_store = test_oauth.OAuthTests.make_store
+    make_app = test_oauth.OAuthTests.make_app
     setUp = test_oauth.OAuthTests.setUp
     register = test_oauth.OAuthTests.register
     begin = test_oauth.OAuthTests.begin

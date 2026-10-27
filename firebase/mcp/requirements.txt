@@ -4,3 +4,4 @@ google-cloud-firestore==2.31.0
 google-cloud-secret-manager==2.30.0
 httpx==0.28.1
 uvicorn==0.41.0
+ai-connector-core @ https://github.com/induction-axiom/ai-connector-core/archive/refs/tags/v0.1.0.tar.gz
