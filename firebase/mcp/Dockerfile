@@ -5,6 +5,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 COPY static ./static
 COPY version.json ./
+# The app user can't write __pycache__ here, so compile now rather than on every cold start.
+RUN python -m compileall -q .
 RUN useradd --uid 10001 --create-home app
 USER 10001
 ENV PYTHONUNBUFFERED=1

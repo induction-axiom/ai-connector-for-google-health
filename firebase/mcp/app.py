@@ -2,12 +2,11 @@
 import json
 import logging
 from pathlib import Path
+from threading import Lock
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import anyio
-import firebase_admin
-from firebase_admin import auth as firebase_auth
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
@@ -34,12 +33,27 @@ BUILD = json.loads(BUILD_FILE.read_text()) if BUILD_FILE.exists() else {"version
 REPOSITORY = "induction-axiom/ai-connector-for-google-health"
 VERSION = BUILD["version"]
 
+FIREBASE_LOCK = Lock()
+
+
+def id_token_claims(raw, project_id):
+    """Firebase Admin checks the owner's Google sign-in. Only consent and the dashboard need it,
+    so it loads on first use: a cold start serving /token or /mcp skips it."""
+    import firebase_admin
+    from firebase_admin import auth
+    with FIREBASE_LOCK:
+        try:
+            firebase_admin.get_app()
+        except ValueError:
+            firebase_admin.initialize_app(options={"projectId": project_id})
+    return auth.verify_id_token(raw)
+
 
 def verify_owner(raw, config, max_age=CONSENT_AUTH_AGE):
     """The owner's identity from a recent Google sign-in. A sign-in that is invalid or too old
     raises owner_google_login_required; a good one by someone else raises not_owner."""
     try:
-        decoded = firebase_auth.verify_id_token(raw)
+        decoded = id_token_claims(raw, config.project_id)
         if (decoded.get("email_verified") is not True
                 or decoded.get("firebase", {}).get("sign_in_provider") != "google.com"
                 or not decoded.get("uid")
@@ -514,6 +528,5 @@ def create_app(config, store, owner_verifier, connection, transport=None):
 def production_app():
     """Tests call create_app with fakes; production wires the real stores here."""
     config = Config.from_env()
-    firebase_admin.initialize_app(options={"projectId": config.project_id})
     return create_app(config, FirestoreStore(config.project_id, config.database), None,
                       SecretConnection(config.project_id, config.connection_secret))

@@ -8,14 +8,19 @@ Only this service's account can read or change the secret. It is read whenever a
 access token is needed, so a change in the dashboard takes effect within the hour at most,
 and at once when the dashboard disconnects, since that also revokes the token at Google.
 """
+from functools import cached_property
 import json
 
 
 class SecretConnection:
     def __init__(self, project, secret_id):
-        from google.cloud import secretmanager
-        self.client = secretmanager.SecretManagerServiceClient()
         self.parent = f"projects/{project}/secrets/{secret_id}"
+
+    @cached_property
+    def client(self):
+        # Made on first use: a cold start serving /token never loads Secret Manager.
+        from google.cloud import secretmanager
+        return secretmanager.SecretManagerServiceClient()
 
     def get(self):
         from google.api_core.exceptions import NotFound
